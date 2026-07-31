@@ -1,70 +1,84 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — send</title>
-    <link rel="stylesheet" href="../shared/style.css" />
-  </head>
-  <body>
-    <h1>DECIMEN <small>— Fountain QR File Transfer</small></h1>
-    <div class="hint" id="specs">loading payload…</div>
-    <details class="settings">
-      <summary>Settings</summary>
-      <div class="row">
-        <label>
-          payload
-          <select id="cfg-payload">
-            <option value="../success.png" selected>512 KB image</option>
-            <option value="../success-2mb.png">2 MB image</option>
-          </select>
-        </label>
-        <label>
-          tx fps
-          <select id="cfg-fps">
-            <option>10</option>
-            <option>15</option>
-            <option>20</option>
-            <option selected>24</option>
-            <option>30</option>
-            <option>60</option>
-          </select>
-        </label>
-        <label>
-          bytes / frame
-          <select id="cfg-bytes">
-            <option>500</option>
-            <option>1000</option>
-            <option selected>1465</option>
-            <option>1850</option>
-            <option>2331</option>
-            <option>2953</option>
-          </select>
-        </label>
-        <label>
-          error correction
-          <select id="cfg-ecc">
-            <option selected>L</option>
-            <option>M</option>
-            <option>Q</option>
-            <option>H</option>
-          </select>
-        </label>
-        <label>
-          display size
-          <input id="cfg-size" type="range" min="300" max="1200" step="50" value="900" />
-        </label>
-      </div>
-      <div class="hint" style="text-align: left; padding-top: 8px">
-        Changes restart the stream — the receiver resets automatically (new
-        session id in the frame headers; that's the fountain protocol's gift).
-      </div>
-    </details>
-    <div class="stage"><canvas id="qr" width="16" height="16"></canvas></div>
-    <div class="hint">
-      Max screen brightness helps. The stream loops forever — stop when the
-      receiver says done.
-    </div>
-    <script type="module" src="./main.ts"></script>
-  </body>
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Optical Transfer — Send File</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #f0f0f0; padding: 20px; text-align: center; margin: 0; }
+    h1 { font-size: 1.4rem; margin-bottom: 20px; color: #fff; }
+    .btn-file { display: inline-block; background: #007bff; color: white; padding: 14px 24px; font-size: 1rem; font-weight: bold; border-radius: 8px; cursor: pointer; margin-bottom: 15px; border: none; }
+    .btn-file:active { background: #0056b3; }
+    #specs { font-size: 0.9rem; color: #aaa; margin-bottom: 15px; min-height: 20px; }
+    #qrcode { display: flex; justify-content: center; align-items: center; background: #fff; padding: 15px; border-radius: 12px; width: fit-content; margin: 0 auto; min-width: 260px; min-height: 260px; }
+  </style>
+</head>
+<body>
+  <h1>DECIMEN — Enviar Arquivo Real</h1>
+  <input type="file" id="fileInput" style="display:none;" />
+  <button class="btn-file" onclick="document.getElementById('fileInput').click()">📁 Escolher Arquivo</button>
+  <div id="specs">Aguardando seleção de arquivo...</div>
+  <div id="qrcode"></div>
+  <script>
+    const CHUNK_SIZE = 300;
+    let frames = [];
+    let currentFrame = 0;
+    let timer = null;
+    let qrInstance = null;
+
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      document.getElementById('specs').innerText = `Lendo "${file.name}"...`;
+
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        const base64Data = evt.target.result;
+        const totalChunks = Math.ceil(base64Data.length / CHUNK_SIZE);
+
+        frames = [];
+        for (let i = 0; i < totalChunks; i++) {
+          const chunk = base64Data.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+          const packet = JSON.stringify({
+            n: file.name,
+            t: totalChunks,
+            i: i,
+            d: chunk
+          });
+          frames.push(packet);
+        }
+
+        startQRLoop(file.name);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    function startQRLoop(fileName) {
+      const container = document.getElementById('qrcode');
+      container.innerHTML = '';
+
+      qrInstance = new QRCode(container, {
+        width: 250,
+        height: 250,
+        correctLevel: QRCode.CorrectLevel.L
+      });
+
+      if (timer) clearInterval(timer);
+      currentFrame = 0;
+
+      timer = setInterval(() => {
+        qrInstance.clear();
+        qrInstance.makeCode(frames[currentFrame]);
+
+        document.getElementById('specs').innerText =
+          `Transmitindo: ${fileName} | Bloco ${currentFrame + 1} de ${frames.length}`;
+
+        currentFrame = (currentFrame + 1) % frames.length;
+      }, 180);
+    }
+  </script>
+</body>
 </html>
