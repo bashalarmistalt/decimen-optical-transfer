@@ -1,6 +1,5 @@
 import { defineConfig } from "vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
-import { resolve } from "node:path";
 
 // HTTPS always: the receiver needs getUserMedia, and on insecure origins
 // that API does not exist at all — a phone reaching this server over the LAN
@@ -10,14 +9,5 @@ import { resolve } from "node:path";
 export default defineConfig({
   base: "./",
   plugins: [basicSsl()],
-  build: {
-    rollupOptions: {
-      input: {
-        index: resolve(__dirname, "index.html"),
-        send: resolve(__dirname, "send/index.html"),
-        receive: resolve(__dirname, "receive/index.html"),
-      },
-    },
-  },
   server: { host: true },
 });

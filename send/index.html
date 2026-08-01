@@ -1,70 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="tr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — send</title>
-    <link rel="stylesheet" href="../shared/style.css" />
+    <meta http-equiv="refresh" content="0; url=../#send" />
+    <title>Decimen — Yayınla</title>
   </head>
   <body>
-    <h1>DECIMEN <small>— Fountain QR File Transfer</small></h1>
-    <div class="hint" id="specs">loading payload…</div>
-    <details class="settings">
-      <summary>Settings</summary>
-      <div class="row">
-        <label>
-          payload
-          <select id="cfg-payload">
-            <option value="../success.png" selected>512 KB image</option>
-            <option value="../success-2mb.png">2 MB image</option>
-          </select>
-        </label>
-        <label>
-          tx fps
-          <select id="cfg-fps">
-            <option>10</option>
-            <option>15</option>
-            <option>20</option>
-            <option selected>24</option>
-            <option>30</option>
-            <option>60</option>
-          </select>
-        </label>
-        <label>
-          bytes / frame
-          <select id="cfg-bytes">
-            <option>500</option>
-            <option>1000</option>
-            <option selected>1465</option>
-            <option>1850</option>
-            <option>2331</option>
-            <option>2953</option>
-          </select>
-        </label>
-        <label>
-          error correction
-          <select id="cfg-ecc">
-            <option selected>L</option>
-            <option>M</option>
-            <option>Q</option>
-            <option>H</option>
-          </select>
-        </label>
-        <label>
-          display size
-          <input id="cfg-size" type="range" min="300" max="1200" step="50" value="900" />
-        </label>
-      </div>
-      <div class="hint" style="text-align: left; padding-top: 8px">
-        Changes restart the stream — the receiver resets automatically (new
-        session id in the frame headers; that's the fountain protocol's gift).
-      </div>
-    </details>
-    <div class="stage"><canvas id="qr" width="16" height="16"></canvas></div>
-    <div class="hint">
-      Max screen brightness helps. The stream loops forever — stop when the
-      receiver says done.
-    </div>
-    <script type="module" src="./main.ts"></script>
+    <p><a href="../#send">Birleşik Decimen arayüzüne git</a></p>
   </body>
 </html>

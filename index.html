@@ -1,23 +1,222 @@
 <!doctype html>
-<html lang="en">
+<html lang="tr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — fountain-coded QR file transfer</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta
+      name="description"
+      content="Ekrandan kameraya, sunucusuz fountain QR görsel aktarımı."
+    />
+    <title>Decimen — Optik Işınlama</title>
     <link rel="stylesheet" href="./shared/style.css" />
   </head>
   <body>
-    <h1>DECIMEN <small>— Fountain QR File Transfer (PoC)</small></h1>
-    <p class="hint">
-      Send a file between two devices using nothing but a screen and a camera.
-      Open <a href="./send/">send</a> on the device with the file (a laptop is
-      ideal) and <a href="./receive/">receive</a> on a phone, then point the
-      phone's camera at the flickering code.
-    </p>
-    <p class="hint">
-      No network path between the devices is used — the payload travels as
-      light. Fountain coding means the receiver can drop any frames, in any
-      order, and still reconstruct the file.
-    </p>
+    <header class="app-header">
+      <div class="brand-mark" aria-hidden="true">D</div>
+      <div>
+        <h1>DECIMEN <small>— optik ışınlama</small></h1>
+        <p class="tagline">Ağ yok. Sunucu yok. Yalnızca ışık.</p>
+      </div>
+    </header>
+
+    <nav class="mode-switcher" aria-label="Aktarım modu">
+      <button class="mode-button active" type="button" data-mode="send" aria-pressed="true">
+        <span aria-hidden="true">↗</span> Yayınla
+      </button>
+      <button class="mode-button" type="button" data-mode="receive" aria-pressed="false">
+        <span aria-hidden="true">⌁</span> Oku
+      </button>
+      <button class="mode-button duel-button" type="button" data-mode="duel" aria-pressed="false">
+        <span aria-hidden="true">⚡</span> Hız Düellosu
+      </button>
+    </nav>
+
+    <main class="app-shell">
+      <section class="mode-panel" id="send-panel" data-panel="send">
+        <div class="panel-intro">
+          <p class="eyebrow">IŞINI HAZIRLA</p>
+          <h2>Bir görsel seç, ekrandan yayınla.</h2>
+          <p>PNG, JPG veya GIF cihazından hiç ayrılmadan QR karelerine dönüşür.</p>
+        </div>
+
+        <div class="file-card" id="file-card">
+          <input id="file-input" class="visually-hidden" type="file" accept="image/*,image/gif" />
+          <label class="file-drop" for="file-input">
+            <span class="file-icon" aria-hidden="true">＋</span>
+            <strong>Görsel seç</strong>
+            <span>PNG · JPG · GIF</span>
+          </label>
+          <div class="file-preview-wrap" id="file-preview-wrap" hidden>
+            <img id="file-preview" alt="Yayınlanacak görsel önizlemesi" />
+            <div class="file-meta">
+              <strong id="file-name"></strong>
+              <span id="file-size"></span>
+              <label class="change-file" for="file-input">Başka görsel seç</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="notice error" id="file-error" role="alert" hidden></div>
+        <button class="secondary-action" id="resize-file" type="button" hidden>
+          Otomatik küçült
+        </button>
+        <button class="primary-action" id="start-broadcast" type="button" disabled>
+          Işınlamayı başlat
+        </button>
+
+        <div class="hint specs" id="specs">Yayınlamak için bir görsel seç.</div>
+
+        <details class="settings" id="send-settings">
+          <summary>Ayarlar <span>verici</span></summary>
+          <div class="row">
+            <label>
+              payload limiti
+              <select id="cfg-limit">
+                <option value="524288">512 KB</option>
+                <option value="2097152" selected>2 MB</option>
+              </select>
+            </label>
+            <label>
+              tx fps
+              <select id="cfg-fps">
+                <option>10</option>
+                <option>15</option>
+                <option>20</option>
+                <option selected>24</option>
+                <option>30</option>
+                <option>60</option>
+              </select>
+            </label>
+            <label>
+              bytes / frame
+              <select id="cfg-bytes">
+                <option>500</option>
+                <option>1000</option>
+                <option selected>1465</option>
+                <option>1850</option>
+                <option>2331</option>
+                <option>2953</option>
+              </select>
+            </label>
+            <label>
+              ECC
+              <select id="cfg-ecc">
+                <option selected>L</option>
+                <option>M</option>
+                <option>Q</option>
+                <option>H</option>
+              </select>
+            </label>
+            <label>
+              ekran boyutu
+              <input id="cfg-size" type="range" min="300" max="1200" step="50" value="900" />
+            </label>
+          </div>
+          <div class="hint settings-note">
+            Ayar değişikliği yayını yeni session-id ile yeniden başlatır.
+          </div>
+        </details>
+
+        <div class="stage" id="qr-stage" hidden>
+          <canvas id="qr" width="16" height="16"></canvas>
+          <div class="live-pill"><i></i> CANLI</div>
+        </div>
+        <p class="hint" id="send-hint" hidden>
+          Ekran parlaklığını artır. Yayın alıcı tamamlayana kadar sürer.
+        </p>
+      </section>
+
+      <section class="mode-panel" id="receive-panel" data-panel="receive" hidden>
+        <div class="panel-intro">
+          <p class="eyebrow" id="receive-eyebrow">IŞINI YAKALA</p>
+          <h2 id="receive-title">Kameranı koda doğrult.</h2>
+          <p id="receive-copy">Kareler eksik gelse bile fountain code görseli yeniden kurar.</p>
+        </div>
+
+        <div class="hint receiver-status" id="stats">Kamerayı başlatmaya hazır.</div>
+
+        <details class="settings" id="receive-settings">
+          <summary>Ayarlar <span>alıcı</span></summary>
+          <div class="row">
+            <label>
+              kamera genişliği
+              <select id="cfg-width">
+                <option>960</option>
+                <option selected>1280</option>
+                <option>1920</option>
+              </select>
+            </label>
+            <label>
+              capture fps
+              <select id="cfg-capfps">
+                <option>30</option>
+                <option selected>60</option>
+              </select>
+            </label>
+            <label>
+              worker sayısı
+              <select id="cfg-workers">
+                <option>1</option>
+                <option selected>2</option>
+                <option>3</option>
+              </select>
+            </label>
+          </div>
+          <div class="hint settings-note">
+            Kamera başlamadan ayarla. iOS için 1280 genişlikte 60 FPS en dengeli seçenektir.
+          </div>
+        </details>
+
+        <button class="primary-action" id="start-camera" type="button">Kamerayı başlat</button>
+
+        <div class="duel-score" id="duel-score" hidden>
+          <div>
+            <span>ANLIK HIZ</span>
+            <strong id="duel-rate">0.0 <small>KB/s</small></strong>
+          </div>
+          <div>
+            <span>TOPLANAN KARE</span>
+            <strong id="duel-frames">0</strong>
+          </div>
+          <div>
+            <span>TAMAMLANMA</span>
+            <strong id="duel-percent">0.0<small>%</small></strong>
+          </div>
+        </div>
+
+        <div class="metrics" id="metrics" hidden>
+          <div class="metric"><div class="k">capture fps</div><div class="v" id="m-cap">—</div></div>
+          <div class="metric"><div class="k">decode fps</div><div class="v amber" id="m-dec">—</div></div>
+          <div class="metric"><div class="k">anlık hız</div><div class="v amber" id="m-rate">—</div></div>
+          <div class="metric"><div class="k">geçen</div><div class="v" id="m-time">—</div></div>
+          <div class="metric"><div class="k">kare yeni/tekrar</div><div class="v" id="m-frames">—</div></div>
+          <div class="metric"><div class="k">blok K</div><div class="v" id="m-k">—</div></div>
+          <div class="metric"><div class="k">blok boyu</div><div class="v" id="m-block">—</div></div>
+          <div class="metric"><div class="k">payload</div><div class="v" id="m-payload">—</div></div>
+        </div>
+
+        <div class="preview camera-preview" id="preview" hidden>
+          <video id="video" muted playsinline></video>
+          <div class="scanner-frame" aria-hidden="true"></div>
+        </div>
+
+        <div class="progress-wrap" id="progress" hidden>
+          <div class="progress-label">
+            <span>TOPLANAN KARE</span>
+            <strong id="progress-text">0 / ~0 · %0</strong>
+          </div>
+          <div class="progress"><div id="bar"></div></div>
+        </div>
+
+        <div id="result" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <footer>DECIMEN // HAVADAN, IŞIKLA, SUNUCUSUZ</footer>
+    <div class="confetti-layer" id="confetti" aria-hidden="true"></div>
+    <script type="module" src="./main.ts"></script>
   </body>
 </html>
