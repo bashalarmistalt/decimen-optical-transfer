@@ -1,0 +1,43 @@
+.glass {
+  position: relative;
+  background: var(--glass-bg);
+  border: none;
+  border-radius: var(--radius);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness));
+}
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(172deg, var(--glass-rim-top), var(--glass-rim-mid) 32%, var(--glass-rim-bottom) 78%, var(--glass-rim-mid) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.glass::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(120% 60% at 18% -18%, var(--glass-sheen), transparent 55%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 26%);
+  pointer-events: none;
+}
+.icon {
+  inline-size: var(--icon);
+  block-size: var(--icon);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.icon svg {
+  width: 100%;
+  height: 100%;
+}

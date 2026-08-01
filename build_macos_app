@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "this script builds the macOS app and must run on macOS"
+  exit 1
+fi
+command -v npm >/dev/null 2>&1 || { echo "npm is required (install Node.js LTS)"; exit 1; }
+command -v cargo >/dev/null 2>&1 || { echo "cargo is required (install Rust via https://rustup.rs)"; exit 1; }
+xcode-select -p >/dev/null 2>&1 || { echo "Xcode Command Line Tools are required: xcode-select --install"; exit 1; }
+
+[ -d node_modules ] || npm install
+npm run build
+npx tauri icon src-tauri/icon-master.png
+npx tauri build
+
+APP="src-tauri/target/release/bundle/macos/Decimen Optical Transfer.app"
+DMG_DIR="src-tauri/target/release/bundle/dmg"
+echo ""
+echo "build complete"
+echo "  app: ${APP}"
+echo "  dmg: ${DMG_DIR}/"
+echo ""
+echo "unsigned first launch: right-click the app and choose Open, or run:"
+echo "  xattr -dr com.apple.quarantine \"${APP}\""
+echo ""
+echo "on first camera use macOS will prompt for permission (System Settings > Privacy > Camera lists the app afterwards); macOS 14 may prompt twice, once for the app and once for the webview"

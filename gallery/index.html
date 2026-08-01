@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Airgap · Gallery</title>
+    <link rel="stylesheet" href="../shared/style.css" />
+  </head>
+  <body class="app gallery-app">
+    <header class="gallery-head glass">
+      <a class="ghost-btn" href="../index.html" title="Home"><span class="icon" data-icon="chevleft"></span></a>
+      <div class="gallery-logo" id="logo"></div>
+      <h1>GALLERY</h1>
+      <div class="seg" role="tablist">
+        <button class="seg-btn active" data-scope="received">Received</button>
+        <button class="seg-btn" data-scope="sent">Sent</button>
+      </div>
+    </header>
+    <main class="gallery-main">
+      <div class="cards" id="cards"></div>
+      <p class="empty hint" id="empty">Nothing here yet.</p>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

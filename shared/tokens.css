@@ -1,0 +1,48 @@
+:root {
+  color-scheme: dark;
+  --bg: #050505;
+  --bg-elev: #0b0a08;
+  --text: #f2efe8;
+  --text-muted: #9a958a;
+  --text-faint: #5d594f;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --glass-bg: rgba(20, 18, 14, 0.4);
+  --glass-bg-2: rgba(255, 255, 255, 0.055);
+  --glass-hover: rgba(255, 255, 255, 0.1);
+  --glass-border: rgba(255, 255, 255, 0.085);
+  --glass-rim-top: rgba(255, 255, 255, 0.32);
+  --glass-rim-mid: rgba(255, 255, 255, 0.07);
+  --glass-rim-bottom: rgba(255, 255, 255, 0.02);
+  --glass-sheen: rgba(255, 255, 255, 0.075);
+  --glass-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.65),
+    0 2px 10px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.035),
+    inset 0 -14px 30px -18px rgba(0, 0, 0, 0.55);
+  --glass-blur: 36px;
+  --glass-saturate: 190%;
+  --glass-brightness: 1.08;
+  --accent: #f97316;
+  --accent-2: #fb923c;
+  --accent-contrast: #160a03;
+  --accent-glow: rgba(249, 115, 22, 0.42);
+  --accent-soft: rgba(249, 115, 22, 0.14);
+  --ok: #46d19e;
+  --warn: #ffb454;
+  --err: #ff6b6b;
+  --radius: 14px;
+  --radius-sm: 9px;
+  --radius-lg: 20px;
+  --space: 8px;
+  --space-2: 12px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur: 180ms;
+  --rail-w: 56px;
+  --panel-w: 300px;
+  --icon: 20px;
+}

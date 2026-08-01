@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Decimen Optical Transfer",
+  "version": "0.21.0",
+  "identifier": "com.decimen.opticaltransfer",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev:tauri",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Decimen Optical Transfer",
+        "url": "index.html",
+        "width": 1100,
+        "height": 820,
+        "minWidth": 720,
+        "minHeight": 560
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.png"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    },
+    "iOS": {
+      "minimumSystemVersion": "14.3"
+    }
+  }
+}

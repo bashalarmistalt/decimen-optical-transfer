@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Window plus scoped file writes for saving received transfers",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [{ "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }]
+    },
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "$DOWNLOAD/**" }, { "path": "$DOCUMENT/**" }]
+    }
+  ]
+}

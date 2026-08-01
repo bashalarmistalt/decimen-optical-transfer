@@ -1,0 +1,75 @@
+#!/bin/bash
+set -euo pipefail
+
+export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/opt/local/bin:$HOME/.volta/bin:$HOME/.asdf/shims:$PATH"
+# shellcheck disable=SC1091
+if ! command -v node >/dev/null 2>&1 && [ -s "$HOME/.nvm/nvm.sh" ]; then NVM_DIR="$HOME/.nvm"; export NVM_DIR; . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true; fi
+
+SRC_TAURI="$(cd "${SRCROOT:?run this from an Xcode build phase}/../.." && pwd)"
+REPO="$(cd "$SRC_TAURI/.." && pwd)"
+LOG="$SRC_TAURI/ios-phase.log"
+echo "decimen ios phase: node=$(command -v node || echo MISSING) npm=$(command -v npm || echo MISSING) cargo=$(command -v cargo || echo MISSING)" | tee "$LOG"
+command -v cargo >/dev/null 2>&1 || { echo "error: cargo not found even after PATH bootstrap; install Rust via https://rustup.rs" | tee -a "$LOG"; exit 1; }
+
+if [ ! -f "$REPO/dist/send/index.html" ]; then
+  echo "decimen ios phase: dist/ missing, building the frontend first" | tee -a "$LOG"
+  command -v npm >/dev/null 2>&1 || { echo "error: dist/ is absent and npm was not found; run 'npm install && npm run build' in $REPO once" | tee -a "$LOG"; exit 1; }
+  [ -d "$REPO/node_modules" ] || (cd "$REPO" && npm install --no-audit --no-fund)
+  (cd "$REPO" && npm run build)
+fi
+
+case "${PLATFORM_DISPLAY_NAME:-iOS}" in
+  *Simulator*)
+    case "$(uname -m)" in
+      arm64) TRIPLE="aarch64-apple-ios-sim"; XARCH="arm64" ;;
+      *) TRIPLE="x86_64-apple-ios"; XARCH="x86_64" ;;
+    esac
+    ;;
+  *)
+    TRIPLE="aarch64-apple-ios"; XARCH="arm64"
+    ;;
+esac
+
+CONF="${CONFIGURATION:-debug}"
+PROFILE_DIR="debug"
+if [ "$CONF" = "release" ]; then PROFILE_DIR="release"; fi
+
+if command -v rustup >/dev/null 2>&1; then
+  rustup target list --installed | grep -q "^${TRIPLE}\$" || rustup target add "$TRIPLE"
+fi
+
+SHIM_DIR="$SRCROOT/.decimen-toolshim"
+mkdir -p "$SHIM_DIR"
+cat > "$SHIM_DIR/swift" <<'SHIM'
+#!/bin/sh
+REAL="$(xcrun -f swift)"
+if [ "${1:-}" = "build" ]; then
+  shift
+  exec "$REAL" build --disable-sandbox "$@"
+fi
+exec "$REAL" "$@"
+SHIM
+chmod +x "$SHIM_DIR/swift"
+
+DEV_DIR="${DEVELOPER_DIR:-}"
+if [ -z "$DEV_DIR" ] && command -v xcode-select >/dev/null 2>&1; then DEV_DIR="$(xcode-select -p)"; fi
+ENV_ARGS=(HOME="$HOME" USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}" TMPDIR="${TMPDIR:-/tmp}"
+  PATH="$SHIM_DIR:$PATH" IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-14.3}")
+if [ -n "$DEV_DIR" ]; then ENV_ARGS+=(DEVELOPER_DIR="$DEV_DIR"); fi
+if [ -n "${CARGO_HOME:-}" ]; then ENV_ARGS+=(CARGO_HOME="$CARGO_HOME"); fi
+if [ -n "${RUSTUP_HOME:-}" ]; then ENV_ARGS+=(RUSTUP_HOME="$RUSTUP_HOME"); fi
+CARGO_ARGS=(build --manifest-path "$SRC_TAURI/Cargo.toml" --target "$TRIPLE" --lib --features custom-protocol)
+if [ "$PROFILE_DIR" = "release" ]; then CARGO_ARGS+=(--release); fi
+
+echo "decimen ios phase: cargo build --target $TRIPLE ($CONF) · scrubbed env, swift shim w/ --disable-sandbox, log: $LOG" | tee -a "$LOG"
+env -i "${ENV_ARGS[@]}" cargo "${CARGO_ARGS[@]}" 2>&1 | tee -a "$LOG"
+
+LIB="$SRC_TAURI/target/$TRIPLE/$PROFILE_DIR/libdecimen_optical_transfer_lib.a"
+[ -f "$LIB" ] || { echo "error: expected staticlib not found at $LIB" | tee -a "$LOG"; exit 1; }
+DEST="$SRCROOT/Externals/$XARCH/$CONF"
+mkdir -p "$DEST"
+cp "$LIB" "$DEST/libapp.a"
+if command -v nm >/dev/null 2>&1; then
+  nm -g "$DEST/libapp.a" 2>/dev/null | grep -q start_app || echo "warning: start_app symbol not visible in libapp.a" | tee -a "$LOG"
+fi
+echo "decimen ios phase: installed $DEST/libapp.a" | tee -a "$LOG"

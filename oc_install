@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+command -v npm >/dev/null 2>&1 || { echo "npm is required (install Node.js LTS)"; exit 1; }
+npm install
+echo "frontend dependencies installed"

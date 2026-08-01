@@ -2,69 +2,136 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — send</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Airgap · Send</title>
     <link rel="stylesheet" href="../shared/style.css" />
   </head>
-  <body>
-    <h1>DECIMEN <small>— Fountain QR File Transfer</small></h1>
-    <div class="hint" id="specs">loading payload…</div>
-    <details class="settings">
-      <summary>Settings</summary>
-      <div class="row">
-        <label>
-          payload
-          <select id="cfg-payload">
-            <option value="../success.png" selected>512 KB image</option>
-            <option value="../success-2mb.png">2 MB image</option>
-          </select>
-        </label>
-        <label>
-          tx fps
-          <select id="cfg-fps">
-            <option>10</option>
-            <option>15</option>
-            <option>20</option>
-            <option selected>24</option>
-            <option>30</option>
-            <option>60</option>
-          </select>
-        </label>
-        <label>
-          bytes / frame
-          <select id="cfg-bytes">
-            <option>500</option>
-            <option>1000</option>
-            <option selected>1465</option>
-            <option>1850</option>
-            <option>2331</option>
-            <option>2953</option>
-          </select>
-        </label>
-        <label>
-          error correction
-          <select id="cfg-ecc">
-            <option selected>L</option>
-            <option>M</option>
-            <option>Q</option>
-            <option>H</option>
-          </select>
-        </label>
-        <label>
-          display size
-          <input id="cfg-size" type="range" min="300" max="1200" step="50" value="900" />
-        </label>
+  <body class="app send-app">
+    <nav class="rail glass">
+      <a class="rail-logo" id="rail-logo" href="../index.html" title="Home"></a>
+      <button class="rail-btn active" data-view="transmit" title="Transmit"><span class="icon" data-icon="send"></span></button>
+      <a class="rail-btn" href="../gallery/index.html" title="Gallery"><span class="icon" data-icon="images"></span></a>
+      <button class="rail-btn" id="panel-toggle" title="Transfer setup"><span class="icon" data-icon="sidepanel"></span></button>
+      <div class="rail-spacer"></div>
+      <button class="rail-btn" id="settings-toggle" title="Settings"><span class="icon" data-icon="gear"></span></button>
+    </nav>
+    <aside class="panel glass" id="panel">
+      <header class="panel-head">
+        <span class="panel-title">Transfer</span>
+        <button class="ghost-btn" id="panel-close" title="Collapse"><span class="icon" data-icon="sidepanel"></span></button>
+      </header>
+      <div class="panel-body">
+        <section class="pgroup">
+          <div class="pgroup-title">Source</div>
+          <div class="seg full" id="src-seg">
+            <button class="seg-btn active" data-src="file">My file</button>
+            <button class="seg-btn" data-src="demo">Demo</button>
+          </div>
+          <label class="field" id="field-file">
+            <span>File</span>
+            <input id="cfg-file" type="file" />
+          </label>
+          <label class="field" id="field-payload" hidden>
+            <span>Payload</span>
+            <select id="cfg-payload">
+              <option value="../success.png" selected>success.png (512 KB)</option>
+              <option value="../success-2mb.png">success-2mb.png (2 MB)</option>
+            </select>
+          </label>
+        </section>
+        <section class="pgroup">
+          <div class="pgroup-title">Parameters</div>
+          <div class="field-grid">
+            <label class="field">
+              <span>TX FPS</span>
+              <select id="cfg-fps">
+                <option>10</option>
+                <option>12</option>
+                <option>15</option>
+                <option>20</option>
+                <option>24</option>
+                <option>30</option>
+                <option selected>60</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Bytes / code</span>
+              <select id="cfg-bytes">
+                <option>500</option>
+                <option>1000</option>
+                <option>1465</option>
+                <option>1850</option>
+                <option>2331</option>
+                <option selected>2953</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Grid</span>
+              <select id="cfg-grid">
+                <option selected>1x1</option>
+                <option>2x1</option>
+                <option>2x2</option>
+                <option>3x2</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Color</span>
+              <select id="cfg-colorch">
+                <option selected value="mono">mono</option>
+                <option value="rgb">rgb x3</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Error correction</span>
+              <select id="cfg-ecc">
+                <option selected>L</option>
+                <option>M</option>
+                <option>Q</option>
+                <option>H</option>
+              </select>
+            </label>
+          </div>
+          <p class="hint" id="effline"></p>
+          <label class="field slider-field">
+            <span>Display size</span>
+            <input id="cfg-size" type="range" min="360" max="1600" step="20" value="1000" />
+          </label>
+        </section>
       </div>
-      <div class="hint" style="text-align: left; padding-top: 8px">
-        Changes restart the stream — the receiver resets automatically (new
-        session id in the frame headers; that's the fountain protocol's gift).
-      </div>
-    </details>
-    <div class="stage"><canvas id="qr" width="16" height="16"></canvas></div>
-    <div class="hint">
-      Max screen brightness helps. The stream loops forever — stop when the
-      receiver says done.
-    </div>
+      <footer class="panel-foot">
+        <button class="btn accent full" id="confirm-btn"><span class="icon" data-icon="send"></span>Confirm &amp; stream</button>
+      </footer>
+    </aside>
+    <main class="stage-area">
+      <section id="view-transmit" class="view">
+        <div class="stage" id="stage">
+          <div class="stage-idle" id="stage-idle">
+            <div class="idle-logo" id="idle-logo"></div>
+            <div class="idle-title">Ready to stream</div>
+            <div class="idle-sub hint">Set your accent, source, and parameters, then press Confirm.</div>
+          </div>
+          <canvas id="qr" class="qr-card" hidden></canvas>
+        </div>
+        <div class="specs" id="specs" hidden></div>
+        <div class="stage-actions" id="stage-actions" hidden>
+          <button class="btn glass" id="done-btn"><span class="icon" data-icon="check"></span>Done</button>
+        </div>
+      </section>
+      <section id="view-settings" class="view" hidden>
+        <div class="settings-card glass">
+          <div class="panel-title">Settings</div>
+          <section class="pgroup">
+            <div class="pgroup-title">Accent</div>
+            <div class="swatches" id="swatches"></div>
+          </section>
+          <section class="pgroup">
+            <div class="pgroup-title">Presets</div>
+            <div class="chips" id="presets"></div>
+            <p class="hint">Presets set TX FPS, bytes per code, grid, and error correction in the transfer panel.</p>
+          </section>
+        </div>
+      </section>
+    </main>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

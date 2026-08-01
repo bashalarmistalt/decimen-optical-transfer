@@ -2,22 +2,35 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Optical Transfer — fountain-coded QR file transfer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Airgap Optical Transfer</title>
     <link rel="stylesheet" href="./shared/style.css" />
   </head>
-  <body>
-    <h1>DECIMEN <small>— Fountain QR File Transfer (PoC)</small></h1>
-    <p class="hint">
-      Send a file between two devices using nothing but a screen and a camera.
-      Open <a href="./send/">send</a> on the device with the file (a laptop is
-      ideal) and <a href="./receive/">receive</a> on a phone, then point the
-      phone's camera at the flickering code.
-    </p>
-    <p class="hint">
-      No network path between the devices is used — the payload travels as
-      light. Fountain coding means the receiver can drop any frames, in any
-      order, and still reconstruct the file.
-    </p>
+  <body class="app home">
+    <main class="home-card">
+      <div class="home-logo" id="logo"></div>
+      <h1 class="home-title">AIRGAP</h1>
+      <nav class="launch">
+        <a class="launch-btn glass" href="./send/index.html">
+          <span class="launch-icon" data-launch="send"></span>
+          <span class="launch-label">airgap send</span>
+        </a>
+        <a class="launch-btn glass" href="./receive/index.html">
+          <span class="launch-icon" data-launch="receive"></span>
+          <span class="launch-label">airgap receive</span>
+        </a>
+        <a class="launch-btn glass" href="./gallery/index.html">
+          <span class="launch-icon" data-launch="gallery"></span>
+          <span class="launch-label">airgap gallery</span>
+        </a>
+      </nav>
+    </main>
+    <script type="module">
+      import { LOGO_SVG, LAUNCH_SVG } from "./shared/icons.ts";
+      import { installErrorGuard } from "./shared/errorguard.ts";
+      installErrorGuard();
+      document.getElementById("logo").innerHTML = LOGO_SVG;
+      for (const el of document.querySelectorAll("[data-launch]")) el.innerHTML = LAUNCH_SVG[el.dataset.launch];
+    </script>
   </body>
 </html>

@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+import re
+import sys
+from pathlib import Path
+
+PHASE = 'exec "$SRCROOT/../../ios_xcode_build_phase"\n'
+
+
+def escape_pbx(text):
+    return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\t", "\\t")
+
+
+def force_sandbox_off(src):
+    out = []
+    injected = 0
+    lines = src.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        out.append(line)
+        stripped = line.strip()
+        if stripped == "buildSettings = {":
+            block = "".join(lines[i : i + 40])
+            if "ENABLE_USER_SCRIPT_SANDBOXING" not in block.split("};")[0]:
+                indent = line[: len(line) - len(line.lstrip())]
+                out.append(indent + "\tENABLE_USER_SCRIPT_SANDBOXING = NO;\n")
+                injected += 1
+    return "".join(out), injected
+
+
+def patch_pbxproj(path):
+    src = path.read_text()
+    changed = False
+    src, injected = force_sandbox_off(src)
+    if injected:
+        print(f"standalone_ios_phase: ENABLE_USER_SCRIPT_SANDBOXING = NO forced in {injected} buildSettings block(s)")
+        changed = True
+    if "ios_xcode_build_phase" in src:
+        if changed:
+            path.write_text(src)
+        return "already"
+    pattern = re.compile(r'(shellScript\s*=\s*")((?:[^"\\]|\\.)*)(")', re.DOTALL)
+    hits = 0
+
+    def repl(m):
+        nonlocal hits
+        body = m.group(2)
+        if "xcode-script" not in body and "decimen path bootstrap" not in body:
+            return m.group(0)
+        hits += 1
+        return m.group(1) + escape_pbx(PHASE) + m.group(3)
+
+    out = pattern.sub(repl, src)
+    if hits == 0:
+        if changed:
+            path.write_text(out)
+        return "none"
+    path.write_text(out)
+    return "patched"
+
+
+def merge_ios_plists(root, gen):
+    import json
+    import plistlib
+
+    src_path = root / "src-tauri" / "Info.ios.plist"
+    if not src_path.is_file():
+        return
+    with open(src_path, "rb") as f:
+        extra = plistlib.load(f)
+    version = json.load(open(root / "src-tauri" / "tauri.conf.json"))["version"]
+    for plist_path in sorted(gen.glob("*_iOS/Info.plist")):
+        with open(plist_path, "rb") as f:
+            info = plistlib.load(f)
+        changed = []
+        for key, value in extra.items():
+            if key not in info:
+                info[key] = value
+                changed.append(key)
+        for key in ("CFBundleShortVersionString", "CFBundleVersion"):
+            if info.get(key) != version:
+                info[key] = version
+                changed.append(f"{key}={version}")
+        if changed:
+            with open(plist_path, "wb") as f:
+                plistlib.dump(info, f)
+            print(f"standalone_ios_phase: Info.plist updated ({', '.join(changed)})")
+        else:
+            print("standalone_ios_phase: Info.plist already complete")
+
+
+def main():
+    root = Path(__file__).resolve().parent.parent
+    gen = root / "src-tauri" / "gen" / "apple"
+    if not gen.is_dir():
+        print("standalone_ios_phase: no src-tauri/gen/apple yet (run tauri ios init first); nothing to do")
+        return 0
+    merge_ios_plists(root, gen)
+    projects = sorted(gen.glob("*.xcodeproj/project.pbxproj"))
+    if not projects:
+        print("standalone_ios_phase: no .xcodeproj found under gen/apple; nothing to do")
+        return 0
+    status = 1
+    for pbx in projects:
+        result = patch_pbxproj(pbx)
+        if result == "patched":
+            print(f"standalone_ios_phase: Build Rust Code phase now execs src-tauri/ios_xcode_build_phase ({pbx.relative_to(root)})")
+            status = 0
+        elif result == "already":
+            print(f"standalone_ios_phase: phase already self-contained ({pbx.relative_to(root)})")
+            status = 0
+        else:
+            print(f"standalone_ios_phase: WARNING no tauri build phase found in {pbx.relative_to(root)}")
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

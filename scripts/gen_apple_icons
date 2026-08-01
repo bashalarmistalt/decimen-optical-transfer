@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+import collections
+import json
+import pathlib
+import sys
+
+from PIL import Image, ImageDraw
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+SRC = ROOT / "src-tauri/icon-master.png"
+OUT = ROOT / "src-tauri/apple-icons/AppIcon.appiconset"
+PREVIEW = ROOT / "src-tauri/apple-icons/homescreen-preview.png"
+BG = (0, 0, 0)
+SIZE = 1024
+RIM_INSET = 12
+IOS_MASK_RADIUS = 0.2237
+SLOTS = [
+    ("iphone", "20x20", 2, "AppIcon-20x20@2x.png"),
+    ("iphone", "20x20", 3, "AppIcon-20x20@3x.png"),
+    ("iphone", "29x29", 2, "AppIcon-29x29@2x.png"),
+    ("iphone", "29x29", 3, "AppIcon-29x29@3x.png"),
+    ("iphone", "40x40", 2, "AppIcon-40x40@2x.png"),
+    ("iphone", "40x40", 3, "AppIcon-40x40@3x.png"),
+    ("iphone", "60x60", 2, "AppIcon-60x60@2x.png"),
+    ("iphone", "60x60", 3, "AppIcon-60x60@3x.png"),
+    ("ipad", "20x20", 1, "AppIcon-20x20@1x.png"),
+    ("ipad", "20x20", 2, "AppIcon-20x20@2x-1.png"),
+    ("ipad", "29x29", 1, "AppIcon-29x29@1x.png"),
+    ("ipad", "29x29", 2, "AppIcon-29x29@2x-1.png"),
+    ("ipad", "40x40", 1, "AppIcon-40x40@1x.png"),
+    ("ipad", "40x40", 2, "AppIcon-40x40@2x-1.png"),
+    ("ipad", "76x76", 1, "AppIcon-76x76@1x.png"),
+    ("ipad", "76x76", 2, "AppIcon-76x76@2x.png"),
+    ("ipad", "83.5x83.5", 2, "AppIcon-83.5x83.5@2x.png"),
+    ("ios-marketing", "1024x1024", 1, "AppIcon-512@2x.png"),
+]
+
+
+def tile_corner_radius(alpha: Image.Image, bbox: tuple[int, int, int, int]) -> int:
+    x0, y0, _, _ = bbox
+    w = alpha.size[0]
+    for y in range(y0, alpha.size[1]):
+        row = alpha.crop((0, y, w, y + 1)).tobytes()
+        first = next((x for x in range(w) if row[x] > 128), None)
+        if first is not None and first <= x0 + 1:
+            return y - y0
+    return 0
+
+
+def full_bleed(master: Image.Image) -> Image.Image:
+    alpha = master.getchannel("A")
+    bbox = alpha.getbbox()
+    if not bbox:
+        raise SystemExit("master has no opaque pixels")
+    x0, y0, x1, y1 = bbox
+    cx0, cy0, cx1, cy1 = x0 + RIM_INSET, y0 + RIM_INSET, x1 - RIM_INSET, y1 - RIM_INSET
+    s = SIZE / min(cx1 - cx0, cy1 - cy0)
+    scaled = master.resize((round(master.width * s), round(master.height * s)), Image.LANCZOS)
+    ox = round((cx0 + cx1) / 2 * s - SIZE / 2)
+    oy = round((cy0 + cy1) / 2 * s - SIZE / 2)
+    bled = Image.new("RGB", (SIZE, SIZE), BG)
+    bled.paste(scaled, (-ox, -oy), scaled.getchannel("A"))
+    content_radius = max(0, round((tile_corner_radius(alpha, bbox) - RIM_INSET) * s))
+    clip = Image.new("L", (SIZE, SIZE), 0)
+    ImageDraw.Draw(clip).rounded_rectangle([0, 0, SIZE - 1, SIZE - 1], radius=content_radius, fill=255)
+    flat = Image.new("RGB", (SIZE, SIZE), BG)
+    flat.paste(bled, (0, 0), clip)
+    for px_x, px_y in ((SIZE // 2, 2), (SIZE // 2, SIZE - 3), (2, SIZE // 2), (SIZE - 3, SIZE // 2)):
+        r, g, b = flat.getpixel((px_x, px_y))
+        assert max(r, g, b) < 90, ("edge midpoint not tile-dark; check RIM_INSET", (px_x, px_y), (r, g, b))
+    return flat
+
+
+def write_preview(flat: Image.Image) -> None:
+    radius = round(IOS_MASK_RADIUS * SIZE)
+    mask = Image.new("L", (SIZE, SIZE), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, SIZE - 1, SIZE - 1], radius=radius, fill=255)
+    board = Image.new("RGB", (SIZE, SIZE), (34, 34, 38))
+    board.paste(flat, (0, 0), mask)
+    board.resize((512, 512), Image.LANCZOS).save(PREVIEW, "PNG")
+
+
+def main() -> int:
+    master = Image.open(SRC).convert("RGBA")
+    if master.size[0] != master.size[1]:
+        print(f"source must be square, got {master.size}")
+        return 1
+    flat = full_bleed(master)
+    OUT.mkdir(parents=True, exist_ok=True)
+    for old in OUT.glob("*"):
+        old.unlink()
+    images = []
+    for idiom, size, scale, fname in SLOTS:
+        px = round(float(size.split("x")[0]) * scale)
+        flat.resize((px, px), Image.LANCZOS).save(OUT / fname, "PNG")
+        images.append({"filename": fname, "idiom": idiom, "scale": f"{scale}x", "size": size})
+    write_preview(flat)
+    contents = {"images": images, "info": {"author": "xcode", "version": 1}}
+    (OUT / "Contents.json").write_text(json.dumps(contents, indent=2) + "\n")
+    check = json.loads((OUT / "Contents.json").read_text())
+    for entry in check["images"]:
+        im = Image.open(OUT / entry["filename"])
+        want = round(float(entry["size"].split("x")[0]) * int(entry["scale"][0]))
+        assert im.size == (want, want) and im.mode == "RGB", (entry, im.size, im.mode)
+    counts = collections.Counter((e["idiom"], e["size"], e["scale"]) for e in check["images"])
+    assert not [k for k, v in counts.items() if v > 1]
+    print(f"appiconset regenerated from {SRC.name} (full-bleed): {len(check['images'])} slots, exact sizes, RGB")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

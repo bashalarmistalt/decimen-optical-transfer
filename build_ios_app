@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "this script prepares the iOS Xcode project and must run on macOS"
+  exit 1
+fi
+command -v npm >/dev/null 2>&1 || { echo "npm is required (install Node.js LTS)"; exit 1; }
+command -v cargo >/dev/null 2>&1 || { echo "cargo is required (install Rust via https://rustup.rs)"; exit 1; }
+command -v rustup >/dev/null 2>&1 || { echo "rustup is required (https://rustup.rs)"; exit 1; }
+command -v pod >/dev/null 2>&1 || { echo "CocoaPods is required: brew install cocoapods"; exit 1; }
+
+XCODE_PATH="$(xcode-select -p 2>/dev/null || true)"
+case "${XCODE_PATH}" in
+  *CommandLineTools*)
+    echo "full Xcode is required for iOS (not just Command Line Tools)."
+    echo "install Xcode from the App Store, launch it once, then run:"
+    echo "  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+    exit 1
+    ;;
+  "")
+    echo "Xcode is required. Install it from the App Store and launch it once."
+    exit 1
+    ;;
+esac
+
+for T in aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
+  rustup target list --installed | grep -q "^${T}$" || rustup target add "${T}"
+done
+
+[ -d node_modules ] || npm install
+npm run build
+
+if [ ! -d src-tauri/gen/apple ]; then
+  npx tauri ios init
+fi
+npx tauri icon src-tauri/icon-master.png
+if command -v python3 >/dev/null 2>&1 && python3 -c "import PIL" >/dev/null 2>&1; then
+  python3 scripts/gen_apple_icons
+else
+  echo "note: Pillow unavailable; using the prebuilt appiconset committed in the repo"
+fi
+
+ICONSET_SRC="src-tauri/apple-icons/AppIcon.appiconset"
+ICONSET_DST="$(find src-tauri/gen/apple -type d -name 'AppIcon.appiconset' | head -1)"
+if [ -d "${ICONSET_SRC}" ] && [ -n "${ICONSET_DST}" ]; then
+  rm -f "${ICONSET_DST}"/*
+  cp "${ICONSET_SRC}"/* "${ICONSET_DST}/"
+  MISSING=0
+  while IFS= read -r NAME; do
+    [ -f "${ICONSET_DST}/${NAME}" ] || { echo "warning: appiconset references missing file ${NAME}"; MISSING=1; }
+  done < <(grep -o '"filename" *: *"[^"]*"' "${ICONSET_DST}/Contents.json" | sed 's/.*: *"//; s/"$//')
+  [ "${MISSING}" -eq 0 ] && echo "custom iOS app icons installed (${ICONSET_DST})"
+elif [ -d "${ICONSET_SRC}" ]; then
+  echo "warning: could not locate AppIcon.appiconset under src-tauri/gen/apple; custom iOS icons not installed"
+fi
+
+chmod +x src-tauri/ios_xcode_build_phase
+python3 scripts/standalone_ios_phase
+
+PLIST="$(find src-tauri/gen/apple -maxdepth 2 -name 'Info.plist' | head -1)"
+if [ -n "${PLIST}" ] && ! grep -q "NSCameraUsageDescription" "${PLIST}"; then
+  echo "error: NSCameraUsageDescription still missing from ${PLIST} after the plist merge"
+  echo "the camera cannot work without it; check src-tauri/Info.ios.plist exists and rerun"
+  exit 1
+fi
+
+PROJ="$(find src-tauri/gen/apple -maxdepth 1 -name '*.xcodeproj' | head -1)"
+MODE="${1:-open}"
+
+case "${MODE}" in
+  prep)
+    echo ""
+    echo "iOS project prepared: ${PROJ}"
+    ;;
+  open)
+    echo ""
+    echo "iOS project ready: ${PROJ}"
+    echo "the project is self-contained now · the Build Rust Code phase compiles the Rust"
+    echo "library itself (no tauri CLI in the loop), so building & running from Xcode works:"
+    echo "  1. pick your iPhone as the destination (first time: Signing & Capabilities > Team)"
+    echo "  2. press Run"
+    echo "  3. on the phone approve the developer in Settings > General > VPN & Device Management"
+    echo "first build compiles the whole Rust dependency tree; expect a few minutes, then it caches"
+    open "${PROJ}" 2>/dev/null || true
+    ;;
+  ipa)
+    SCHEME="$(basename "${PROJ}" .xcodeproj)_iOS"
+    ARCHIVE="src-tauri/gen/apple/build/decimen.xcarchive"
+    EXPORT_DIR="src-tauri/gen/apple/build/export"
+    rm -rf "${ARCHIVE}" "${EXPORT_DIR}"
+    xcodebuild -project "${PROJ}" -scheme "${SCHEME}" -configuration release \
+      -destination 'generic/platform=iOS' -archivePath "${ARCHIVE}" \
+      -allowProvisioningUpdates archive
+    xcodebuild -exportArchive -archivePath "${ARCHIVE}" \
+      -exportOptionsPlist src-tauri/gen/apple/ExportOptions.plist \
+      -exportPath "${EXPORT_DIR}" -allowProvisioningUpdates
+    IPA="$(find "${EXPORT_DIR}" -name '*.ipa' | head -1)"
+    if [ -z "${IPA}" ]; then
+      echo "export finished but no .ipa found under ${EXPORT_DIR}; see the output above"
+      exit 1
+    fi
+    echo "ipa ready: ${IPA}"
+    DEVICE="$(xcrun devicectl list devices 2>/dev/null | grep -Eo '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}' | head -1)"
+    if [ -n "${DEVICE}" ]; then
+      echo "installing to connected iPhone ${DEVICE}"
+      xcrun devicectl device install app --device "${DEVICE}" "${IPA}"
+      echo "done · first launch: approve the developer in Settings > General > VPN & Device Management"
+    else
+      echo "no iPhone detected; plug it in (unlocked, trusted) and rerun, or install the .ipa via"
+      echo "Xcode > Window > Devices and Simulators > drag it onto the phone"
+    fi
+    ;;
+  *)
+    echo "unknown mode '${MODE}' · use: ./build_ios_app [open|ipa|prep]"
+    exit 1
+    ;;
+esac

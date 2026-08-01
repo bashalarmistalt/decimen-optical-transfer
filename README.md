@@ -9,8 +9,8 @@ The payload travels as light.
 This is a minimal proof of concept extracted from a larger
 experiment that reached **128 KB/s phone-to-phone** with denser frames,
 multi-code grids, and an error-corrected color channel. This PoC keeps only
-the essential trick and transmits a 512 KB image (or a 2 MB one, selectable
-in the sender's settings) at a comfortable rate.
+the essential trick & transmits a bundled demo image (512 KB or 2 MB) or
+**any file you drop onto the sender page** at a comfortable rate.
 
 <p align="center">
   <img src="docs/receiving.jpg" width="420"
@@ -20,6 +20,18 @@ in the sender's settings) at a comfortable rate.
 
 ## Try it
 
+**In a browser, no install:** the GitHub Pages demo at
+`https://YOUR-GITHUB-USERNAME.github.io/decimen-optical-transfer/` · it
+deploys automatically from `main` (enable once: repo **Settings -> Pages ->
+Source: GitHub Actions**). The demo streams bundled sample payloads; the
+receive page's camera works there bc github.io is https.
+
+**Prebuilt apps:** the **Releases** page carries a macOS `.dmg` (Apple
+silicon) & the pre-patched iOS Xcode project · each release describes its
+install steps (`docs/release-macos.md`, `docs/release-ios.md`).
+
+**From source:**
+
 ```bash
 npm install
 npm run dev
@@ -27,12 +39,14 @@ npm run dev
 
 - On the **sending** device (a laptop is ideal): open
   `https://localhost:5173/send/` and it starts streaming immediately. Max
-  screen brightness helps.
+  screen brightness helps. To send your own file, drop it anywhere on the
+  page (or pick one in Settings) & the stream restarts w/ it.
 - On the **receiving** device (a phone): open the `Network` URL Vite prints
   (`https://<lan-ip>:5173/receive/`), accept the certificate warning once,
   tap **Start camera**, and point it at the code.
-- A few seconds later: *Transfer Complete!* and the received image, verified
-  by hash.
+- A few seconds later: *Transfer Complete!* w/ the received file, verified
+  by hash: a preview when it's an image, plus a **Save** button that
+  downloads it under its original name.
 
 **Why the dev server is https-only:** the receiver uses `getUserMedia`, and
 browsers remove that API entirely on insecure origins: a phone reaching
@@ -67,7 +81,9 @@ and receiver frame rates don't need to match at all.
 **Every frame is self-describing.** A 20-byte header carries the session id,
 sequence number, block count/size, file length, and a hash. There is no
 handshake: the receiver locks onto a stream mid-flight, and restarting the
-sender (new session id) automatically resets the receiver.
+sender (new session id) automatically resets the receiver. The payload
+itself is wrapped w/ a tiny prefix (1 length byte + UTF-8 filename), so the
+receiver can save whatever arrives under its real name & type.
 
 **Decoding.** Safari has never shipped `BarcodeDetector` (WebKit bug 281848),
 so decoding is [zxing-cpp](https://github.com/zxing-cpp/zxing-cpp) compiled
@@ -95,16 +111,71 @@ mean dropped frames, which the fountain happily absorbs.
 
 ## Tuning
 
-Both pages have a collapsed **Settings** panel. On the sender: payload size
-(512 KB or 2 MB), tx fps, bytes per frame, error-correction level, and
-display size. Changing anything restarts the stream, and the receiver resets
-automatically off the new session id. On the receiver: capture width,
-capture fps, and decode worker count, applied when the camera starts.
+The sender's **Transfer** side panel holds a file
+picker, payload choice (your file or a 512 KB / 2 MB demo image), tx fps, bytes per frame, error-correction level, and
+display size; accent color & presets live on the gear **Settings** page in
+the main area. Changing anything restarts the stream, and the receiver resets
+automatically off the new session id. On the receiver: capture width, capture fps, color, and decode worker
+count (defaults 1280 · 60 · mono · 3), applied when the camera starts.
 
 | setting | default | notes |
 |---|---|---|
-| tx fps | 24 | each frame must own at least 2 refresh cycles of the display |
-| bytes / frame | 1465 (QR v27) | denser is faster if the receiver still decodes it; 2953 (v40) works phone-to-phone at close range |
+| tx fps | 60 | each frame must own at least 2 refresh cycles of the display, so the panel clamps the effective rate (60 lands 30-31 on a 60-62 Hz screen; true 60 needs a 120 Hz panel) |
+| bytes / frame | 2953 (QR v40) | denser is faster if the receiver still decodes it; drop to 1465 (v27) for distance or shaky hands |
+| grid | 1x1 | codes shown per frame; each code is an independent fountain frame, so 2x2 is a clean 4x multiplier w/o any protocol change |
+| color | mono | rgb packs 3 codes per cell into the R/G/B channels (x3 ceiling); needs decent white balance & the receiver's Color set to rgb |
+
+**Reading the panel honestly.** The sender now shows a live effective line
+under the parameters: the true B/code after v40 capacity clamping for the
+chosen error-correction level (2953 needs L; picking M silently used to
+drop you to 2331), the fps after clamping to half the measured display
+refresh (60 fps on a 60 Hz panel tears half the frames for the camera), &
+the resulting KB/s ceiling. The receiver's crop tracker is now sticky: a
+torn frame that decodes one code of a grid no longer collapses the ROI to
+that quadrant (it grows-only, re-anchoring after ~30 sustained-small
+captures), which is what silently turned 2x2 runs into 1x1 performance.
+
+**Reaching Bluetooth-class speeds.** Goodput = bytes/code x codes/frame x
+fps / ~1.18 fountain overhead x decode success. 2x2 w/ 1465 B at 30 fps
+budgets ~145 KB/s goodput, i.e. Bluetooth Classic territory; 2x2 w/ 2953 B
+(V40) budgets ~290 KB/s. The catch is pixels-per-module at the camera:
+2x2 V27 wants >=1280-wide capture w/ the grid filling the viewfinder, 2x2
+V40 wants 1920 capture, propped & close. Old receivers still work against
+a gridded sender, they just decode one code per capture instead of all of
+them, bc every code is self-describing.
+
+## What this new PR adds
+
+The PoC above grew into a shippable app in this tree; the additions, in the
+order they earned their place:
+
+- **App shells & pipelines.** Tauri macOS .app + iOS app, fully offline, w/
+  one-command builds (`build_macos_app` / `build_ios_app`): standalone Xcode
+  build phase, Info.plist merge (camera usage, file sharing), icon
+  generation from one master, scoped plugin-fs saves.
+- **Launcher & galleries.** A landing launcher, sent + received galleries w/
+  full-size originals persisted (IndexedDB, 60 items / 384 MB, oldest-first
+  eviction), & a fullscreen viewer w/ a save/export control on every
+  platform: plugin-fs to Downloads / the Files app under Tauri, a blob
+  download in browsers (incl. the Pages demo).
+- **Receive pipeline.** Sticky grow-only grid ROI w/ re-anchor (fixes the
+  quadrant collapse that turned 2x2 into 1x1), per-cell parallel decode
+  fan-out w/ per-round aggregation, worker count to 8, ImageBitmap ->
+  OffscreenCanvas readback inside workers, a duplicate-capture skim skip, &
+  plane-sighting dedupe.
+- **Sender.** Preset chips incl. **Prime** (upstream's ~130 KB/s field
+  recipe: 60 fps · 2953 B · 1x1 · L), the live effective-params line
+  (capacity clamp, display-safe fps, KB/s ceiling), grids to 3x2, & an
+  **rgb x3** channel-multiplex mode: three independent droplet codes per
+  cell packed into the R/G/B channels; a failed plane is just a lost
+  droplet, bc the fountain never learns color exists.
+- **Field-tuned defaults.** Sender: 60 fps · 2953 B · My file as the first
+  source toggle. Receiver: 1280 wide · 60 cap fps · mono · 3 workers.
+- **Ops.** Global error overlays on every page, accent theming, phone-safe
+  chrome (safe-area insets, bottom tab rail), & a GitHub Pages demo
+  workflow (`npm run build:pages` + actions deploy).
+- All shebang scripts need to be `chmod +x [name-of-shebang]` to make them executable.
+- iOS & macOS markdowns are in the `docs` folder & both app bundles are in the `app_bundles` folder.
 
 The parent experiment's measured ceiling with this exact architecture plus
 denser frames, a 120 fps ProMotion sender, and stacked codes: ~128 KB/s

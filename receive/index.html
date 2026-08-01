@@ -2,65 +2,86 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
-    />
-    <title>Optical Transfer — receive</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Decimen · Receive</title>
     <link rel="stylesheet" href="../shared/style.css" />
   </head>
-  <body>
-    <h1>DECIMEN <small>— Fountain QR File Transfer</small></h1>
-    <div class="hint" id="stats">point the camera at the sender's code</div>
-    <details class="settings" id="settings">
-      <summary>Settings</summary>
-      <div class="row">
-        <label>
-          capture width
-          <select id="cfg-width">
-            <option>960</option>
-            <option selected>1280</option>
-            <option>1920</option>
-          </select>
-        </label>
-        <label>
-          capture fps
-          <select id="cfg-capfps">
-            <option>30</option>
-            <option selected>60</option>
-          </select>
-        </label>
-        <label>
-          decode workers
-          <select id="cfg-workers">
-            <option>1</option>
-            <option selected>2</option>
-            <option>3</option>
-          </select>
-        </label>
-      </div>
-      <div class="hint" style="text-align: left; padding-top: 8px">
-        Set before starting the camera. 1280-wide is the widest mode iOS runs
-        at a true 60 fps; the fps request is demanded with `exact` first
-        because `ideal: 60` silently delivers 30.
-      </div>
-    </details>
-    <button id="start">Start camera</button>
-    <div class="metrics" id="metrics" style="display: none">
-      <div class="metric"><div class="k">capture fps</div><div class="v" id="m-cap">—</div></div>
-      <div class="metric"><div class="k">decode fps</div><div class="v amber" id="m-dec">—</div></div>
-      <div class="metric"><div class="k">goodput</div><div class="v amber" id="m-rate">—</div></div>
-      <div class="metric"><div class="k">elapsed</div><div class="v" id="m-time">—</div></div>
-      <div class="metric"><div class="k">frames new/dup</div><div class="v" id="m-frames">—</div></div>
-      <div class="metric"><div class="k">blocks K</div><div class="v" id="m-k">—</div></div>
-      <div class="metric"><div class="k">block len</div><div class="v" id="m-block">—</div></div>
-      <div class="metric"><div class="k">payload</div><div class="v" id="m-payload">—</div></div>
-    </div>
-    <div class="preview" id="preview" style="display: none">
-      <video id="video" muted playsinline></video>
-    </div>
-    <div class="progress" id="progress" style="display: none"><div id="bar"></div></div>
-    <div id="result"></div>
+  <body class="app receive-app">
+    <a class="ghost-btn back-float" href="../index.html" title="Home"><span class="icon" data-icon="chevleft"></span></a>
+    <main class="rx-main">
+      <section id="tab-receiver" class="view rx-view">
+        <header class="stage-head">
+          <div class="rx-logo" id="rx-logo"></div>
+          <h1>AIRGAP <span>receive</span></h1>
+        </header>
+        <details class="glass rx-settings" id="settings">
+          <summary>Capture settings</summary>
+          <div class="field-row">
+            <label class="field">
+              <span>Width</span>
+              <select id="cfg-width">
+                <option>960</option>
+                <option selected>1280</option>
+                <option>1920</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Cap FPS</span>
+              <select id="cfg-capfps">
+                <option>30</option>
+                <option selected>60</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Color</span>
+              <select id="cfg-color">
+                <option selected value="mono">mono</option>
+                <option value="rgb">rgb</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Workers</span>
+              <select id="cfg-workers">
+                <option>1</option>
+                <option>2</option>
+                <option selected>3</option>
+                <option>4</option>
+                <option>6</option>
+                <option>8</option>
+              </select>
+            </label>
+          </div>
+        </details>
+        <button id="start" class="btn accent big"><span class="icon" data-icon="camera"></span>Start camera</button>
+        <div class="camera-wrap glass" id="preview">
+          <video id="video" playsinline muted></video>
+        </div>
+        <div class="progress glass" id="progress"><div class="bar" id="bar"></div></div>
+        <div class="stats hint" id="stats">idle</div>
+        <div class="metrics glass" id="metrics">
+          <div class="metric"><span>cap fps</span><b id="m-cap">–</b></div>
+          <div class="metric"><span>dec fps</span><b id="m-dec">–</b></div>
+          <div class="metric"><span>rate</span><b id="m-rate">–</b></div>
+          <div class="metric"><span>time</span><b id="m-time">–</b></div>
+          <div class="metric"><span>new/dup</span><b id="m-frames">–</b></div>
+          <div class="metric"><span>K</span><b id="m-k">–</b></div>
+          <div class="metric"><span>block</span><b id="m-block">–</b></div>
+          <div class="metric"><span>payload</span><b id="m-payload">–</b></div>
+        </div>
+        <div class="result" id="result"></div>
+      </section>
+      <section id="tab-gallery" class="view rx-view" hidden>
+        <header class="stage-head">
+          <h1>RECEIVED <span>this device</span></h1>
+        </header>
+        <div class="cards" id="rx-cards"></div>
+        <p class="empty hint" id="rx-empty">Nothing received on this device yet.</p>
+      </section>
+    </main>
+    <nav class="tabbar glass">
+      <button class="tab-btn active" data-tab="receiver"><span class="icon" data-icon="camera"></span><span>Receive</span></button>
+      <button class="tab-btn" data-tab="gallery"><span class="icon" data-icon="images"></span><span>Gallery</span></button>
+    </nav>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

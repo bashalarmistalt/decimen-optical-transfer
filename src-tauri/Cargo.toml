@@ -1,0 +1,24 @@
+[package]
+name = "decimen-optical-transfer"
+version = "0.14.0"
+description = "Fountain-coded QR file transfer, fully offline"
+edition = "2021"
+
+[lib]
+name = "decimen_optical_transfer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-fs = "2"
+
+[profile.release]
+strip = true
+lto = true

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key>
+  <string>Optical.AirGap</string>
+  <key>NSPhotoLibraryAddUsageDescription</key>
+  <string>Lets you add received pictures to your Photos library from the preview.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>The receiver decodes QR frames from the camera to reconstruct the transferred file. Nothing leaves the device.</string>
+  <key>UIFileSharingEnabled</key>
+  <true/>
+  <key>LSSupportsOpeningDocumentsInPlace</key>
+  <true/>
+</dict>
+</plist>
