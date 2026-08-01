@@ -12,5 +12,6 @@
     "skipLibCheck": true,
     "types": ["vite/client"]
   },
-  "include": ["shared", "send", "receive"]
+  "include": ["shared", "send", "receive"],
+  "exclude": ["**/*.test.ts"]
 }

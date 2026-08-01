@@ -16,6 +16,15 @@ export const HEADER_LEN = 20;
 const MAGIC0 = 0xd1;
 const MAGIC1 = 0x0c;
 
+/**
+ * Absolute ceiling on declared file size. Defense-in-depth against a
+ * self-consistent but absurd header (k and blockLen are independently
+ * attacker-controlled u16s, so k * blockLen can still approach ~4 GiB).
+ * Well above the PoC's 2 MB demo payload; raise intentionally if the
+ * product starts shipping larger transfers.
+ */
+export const MAX_TOTAL_LEN = 32 * 1024 * 1024;
+
 export interface FrameHeader {
   sessionId: number;
   seq: number;
@@ -56,6 +65,15 @@ export function parseFrame(
   };
   if (header.k === 0 || header.blockLen === 0 || header.totalLen === 0) return null;
   if (bytes.length !== HEADER_LEN + header.blockLen) return null;
+
+  // totalLen must match k blocks of blockLen: the last block may be short,
+  // so (k - 1) * blockLen < totalLen ≤ k * blockLen. Without this check a
+  // single hostile frame can declare totalLen ≈ 4 GiB with k = 1 and drive
+  // LTDecoder.assemble() to allocate that many bytes (see issue #1).
+  const cap = header.k * header.blockLen;
+  if (header.totalLen > cap || header.totalLen <= cap - header.blockLen) return null;
+  if (header.totalLen > MAX_TOTAL_LEN) return null;
+
   return { header, block: bytes.subarray(HEADER_LEN) };
 }
 
