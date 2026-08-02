@@ -4,3 +4,5 @@ dist/
 .DS_Store
 dist-standalone/
 artifacts/
+.idea/
+.wrangler/

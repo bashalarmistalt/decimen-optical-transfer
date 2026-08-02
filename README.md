@@ -1,12 +1,24 @@
 # Decimen Optical Transfer: fountain-coded QR file transfer
+![screenshot.png](public/screenshot.png)
 
+Transfer files between devices with light — zero network, zero pairing, 100% offline.
+
+a Progressive Web App that moves files and text snippets from one screen to another device's camera using fountain-coded animated QR codes.
+
+Why it's useful:
+- Air-gapped & offline: No Wi-Fi, Bluetooth, local LAN path, cloud storage, or account required.
+- Fountain-coded transmission: Uses Luby transform (soliton) fountain codes so the receiver can scan frames in any order. Dropping a frame never corrupts the transfer.
+- Any file or text: Automatically compresses compressible data with gzip and restores original filenames and bytes bit-exact (verified via SHA-256).
+- Zero-install PWA: Runs entirely in the browser. You can install it once and use it offline forever.
+
+Open it on your laptop, point your phone camera at the screen, and transfer files with light.
 Send a file between two devices using nothing but a **screen and a camera**.
 One page displays the file as an endless stream of animated QR codes; another
 device points its camera at it and reconstructs the file. **No network path
 between the devices, no app, no pairing, no permissions beyond the camera.**
 The payload travels as light.
 
-**Live at [decimen.app](https://decimen.app/)** — open it on both devices and
+**Live at [App](https://decimen-opt.pages.dev/)** — open it on both devices and
 go. Works offline after the first visit.
 
 This is a minimal proof of concept extracted from a larger
@@ -26,7 +38,7 @@ receiver works out which one is arriving from the container's media type.
 
 ## Try it
 
-The hosted site is live at [decimen.app](https://decimen.app/); everything
+The hosted site is live at [App](https://decimen-opt.pages.dev/); everything
 below is for running it yourself.
 
 ```bash
@@ -70,7 +82,7 @@ Three shapes, all built from the same source.
 
 | | what it is | needs a server? | offline |
 |---|---|---|---|
-| **Hosted site** | the three pages, plus a service worker — live at [decimen.app](https://decimen.app/) | yes, any static host | after the first visit |
+| **Hosted site** | the three pages, plus a service worker — live at [App](https://decimen-opt.pages.dev/) | yes, any static host | after the first visit |
 | **`decimen-sender.html`** | one file, ~55 KB | no | always |
 | **`decimen-receiver.html`** | one file, ~1.3 MB | see below | always |
 
@@ -215,7 +227,7 @@ handheld, ~186 KB/s propped.
 The concept here was arrived at independently. It turns out
 several people have had similar ideas, and their takes are all
 worth a look:
-
+- [bashalarmistalt/decimen-optical-transfer](https://github.com/bashalarmistalt/decimen-optical-transfer/): initial app and idea.
 - [mohankumarelec/airgapped-qr-code-transfer](https://github.com/mohankumarelec/airgapped-qr-code-transfer):
   browser-based QR file transfer with compression and sequential chunking.
   Discovered after publicly demoing this project; convergent evolution in

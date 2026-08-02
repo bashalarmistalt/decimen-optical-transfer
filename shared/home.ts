@@ -1,4 +1,13 @@
 import QRCode from "qrcode";
+interface BeforeInstallPromptEvent extends Event {
+  readonly platforms: string[];
+  readonly userChoice: Promise<{
+    outcome: "accepted" | "dismissed";
+    platform: string;
+  }>;
+  prompt(): Promise<void>;
+}
+
 
 function initQrShare(): void {
   const canvas = document.getElementById("qr-canvas") as HTMLCanvasElement | null;
@@ -57,8 +66,63 @@ function initQrShare(): void {
   });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initQrShare);
-} else {
+function initPwaInstall(): void {
+  const installBtn = document.getElementById("install-btn") as HTMLButtonElement | null;
+  if (!installBtn) return;
+
+  const nav = window.navigator;
+  const isStandalone =
+    window.matchMedia("(display-mode: standalone)").matches ||
+    ("standalone" in nav && nav.standalone === true);
+  if (isStandalone) {
+    installBtn.hidden = true;
+    return;
+  }
+
+  let deferredPrompt: BeforeInstallPromptEvent | undefined;
+
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferredPrompt = e as BeforeInstallPromptEvent;
+    installBtn.hidden = false;
+  });
+
+  window.addEventListener("appinstalled", () => {
+    installBtn.hidden = true;
+    deferredPrompt = undefined;
+  });
+
+  installBtn.addEventListener("click", () => {
+    if (!deferredPrompt) return;
+    const promptEvent = deferredPrompt;
+    deferredPrompt = undefined;
+    installBtn.disabled = true;
+
+    void promptEvent
+      .prompt()
+      .then(() => promptEvent.userChoice)
+      .then((choice) => {
+        if (choice.outcome === "accepted") {
+          installBtn.hidden = true;
+        } else {
+          installBtn.disabled = false;
+          deferredPrompt = promptEvent;
+        }
+      })
+      .catch((err) => {
+        console.warn("PWA install prompt error:", err);
+        installBtn.disabled = false;
+      });
+  });
+}
+
+function initHome(): void {
   initQrShare();
+  initPwaInstall();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initHome);
+} else {
+  initHome();
 }

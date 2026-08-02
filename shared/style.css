@@ -476,7 +476,8 @@ details.settings input[type="range"] {
   font-weight: 500;
 }
 
-#share-btn {
+#share-btn,
+#install-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -495,10 +496,17 @@ details.settings input[type="range"] {
     color 130ms ease;
 }
 
-#share-btn:hover {
+#share-btn:hover,
+#install-btn:hover {
   background: rgba(var(--accent-rgb), 0.08);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+#share-btn:disabled,
+#install-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .transfer-grid {
   display: grid;
