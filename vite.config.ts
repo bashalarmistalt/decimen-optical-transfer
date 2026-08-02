@@ -68,11 +68,17 @@ const selectOptions = (values: readonly number[], selected: number) =>
     .map((v) => (v === selected ? `<option selected>${v}</option>` : `<option>${v}</option>`))
     .join("");
 
+const SHARE_URL = new URL(
+  "?utm_source=qr_share&utm_medium=qr&utm_campaign=app_share",
+  SITE_URL,
+).href;
+
 // One token set for every mode — the standalone pages carry these tokens too.
 const TOKENS = {
   MAX_FILE_LABEL,
   MAX_SNIPPET_LABEL,
   SITE_URL,
+  SHARE_URL,
   OG_IMAGE: new URL("og.png", SITE_URL).href,
   TX_FPS_OPTIONS: selectOptions(TX_FPS_OPTIONS, DEFAULT_TX_FPS),
   FRAME_BYTES_OPTIONS: selectOptions(FRAME_BYTES_OPTIONS, DEFAULT_FRAME_BYTES),
@@ -116,7 +122,7 @@ export default defineConfig(({ mode }) => {
     base: "./",
     plugins: [
       htmlTokens(TOKENS),
-      basicSsl(),
+      !process.env.VITE_NO_SSL && basicSsl(),
       VitePWA({
         registerType: "autoUpdate",
         // We inject our own registration — see rootPwaHead().

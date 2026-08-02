@@ -40,11 +40,20 @@
     </header>
     <main class="home-shell">
       <section class="hero">
-        <h1>Transfer files<br />with light.</h1>
-        <p class="hero-copy">
-          Send a file or a block of text from one screen to another device's camera.
-          No account, pairing, cloud storage, or network path between devices.
-        </p>
+        <div class="hero-main">
+          <h1>Transfer files<br />with light.</h1>
+          <p class="hero-copy">
+            Send a file or a block of text from one screen to another device's camera.
+            No account, pairing, cloud storage, or network path between devices.
+          </p>
+        </div>
+        <aside class="hero-qr" aria-label="Open on another device">
+          <canvas id="qr-canvas" width="124" height="124" title="Scan to open Decimen on your phone" data-share-url="%SHARE_URL%"></canvas>
+          <div class="qr-controls">
+            <span class="qr-label">Scan to open on phone</span>
+            <button type="button" class="action-share" id="share-btn" data-share-url="%SHARE_URL%" title="Share Decimen link">Share app <svg class="action-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>
+          </div>
+        </aside>
       </section>
 
       <section class="transfer-grid" aria-label="Choose a side">
@@ -87,5 +96,6 @@
         <a href="https://github.com/bashalarmistalt/decimen-optical-transfer/releases">Releases</a>
       </nav>
     </footer>
+    <script type="module" src="shared/home.ts"></script>
   </body>
 </html>
