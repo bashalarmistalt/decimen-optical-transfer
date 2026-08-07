@@ -83,20 +83,21 @@ test("filenames that sanitise away fall back to a safe default", async () => {
 test("the frame header is byte-for-byte what the wire expects", () => {
   // 20-byte little-endian header, then the block. Both ends parse this without
   // negotiating, and standalone builds from older releases stay in circulation.
+  // totalLen must be consistent with k×blockLen (parseFrame rejects otherwise).
   const frame = packFrame(
     {
       sessionId: 0xbeef,
       seq: 0x01020304,
       k: 0x0111,
       blockLen: 6,
-      totalLen: 0x00fedcba,
+      totalLen: 1638, // 0x0111 * 6 — full last block
       payloadFnv: 0x89abcdef,
     },
     new Uint8Array([1, 2, 3, 4, 5, 6]),
   );
   assert.equal(
     [...frame].map((b) => b.toString(16).padStart(2, "0")).join(" "),
-    "d1 0c ef be 04 03 02 01 11 01 06 00 ba dc fe 00 ef cd ab 89 01 02 03 04 05 06",
+    "d1 0c ef be 04 03 02 01 11 01 06 00 66 06 00 00 ef cd ab 89 01 02 03 04 05 06",
   );
   assert.equal(frame.length, HEADER_LEN + 6);
 
@@ -107,7 +108,7 @@ test("the frame header is byte-for-byte what the wire expects", () => {
     seq: 0x01020304,
     k: 0x0111,
     blockLen: 6,
-    totalLen: 0x00fedcba,
+    totalLen: 1638,
     payloadFnv: 0x89abcdef,
   });
   assert.deepEqual(parsed.block, new Uint8Array([1, 2, 3, 4, 5, 6]));

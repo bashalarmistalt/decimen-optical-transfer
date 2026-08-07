@@ -15,6 +15,12 @@
 export const HEADER_LEN = 20;
 export const MAX_FILE_BYTES = 64 * 1024 * 1024;
 /**
+ * Absolute ceiling on declared frame `totalLen`. Same as MAX_FILE_BYTES so a
+ * self-consistent but absurd k×blockLen product cannot drive assemble() past
+ * the product file-size limit (see issue #1 / parseFrame).
+ */
+export const MAX_TOTAL_LEN = MAX_FILE_BYTES;
+/**
  * One place for the number, so the picker label, the rejection message and
  * packFile()'s own error can't drift apart. The HTML pulls it in as the
  * `%MAX_FILE_LABEL%` token (see htmlTokens() in vite.config.ts).
@@ -309,6 +315,15 @@ export function parseFrame(
   };
   if (header.k === 0 || header.blockLen === 0 || header.totalLen === 0) return null;
   if (bytes.length !== HEADER_LEN + header.blockLen) return null;
+
+  // totalLen must match k blocks of blockLen: the last block may be short, so
+  // (k - 1) * blockLen < totalLen ≤ k * blockLen. Without this a single hostile
+  // frame can declare totalLen ≈ 4 GiB with k = 1 and drive LTDecoder.assemble()
+  // to allocate that many bytes (issue #1).
+  const cap = header.k * header.blockLen;
+  if (header.totalLen > cap || header.totalLen <= cap - header.blockLen) return null;
+  if (header.totalLen > MAX_TOTAL_LEN) return null;
+
   return { header, block: bytes.subarray(HEADER_LEN) };
 }
 
