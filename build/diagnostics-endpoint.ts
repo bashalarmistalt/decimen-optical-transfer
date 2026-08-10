@@ -50,7 +50,13 @@ export function diagnosticsEndpoint(version: string): Plugin {
           const body = Buffer.concat(chunks).toString("utf8");
           try {
             const report = JSON.parse(body) as Record<string, unknown>;
-            const role = typeof report.role === "string" ? report.role : "run";
+            // report.role becomes part of a file path below. The dev server binds
+            // to the LAN (server: { host: true }, so a phone can reach it), so
+            // this body is attacker-reachable from anyone on the same network —
+            // without sanitizing, a role like "../../../../home/x/.ssh/foo" is a
+            // path-traversal write outside runsDir.
+            const rawRole = typeof report.role === "string" ? report.role : "run";
+            const role = /^[a-zA-Z0-9_-]+$/.test(rawRole) ? rawRole : "run";
             const receivedAt = new Date().toISOString();
             report._meta = { appVersion: version, receivedAt };
             server.config.logger.info(`\n[diagnostics] ${role} report\n${formatReport(report)}`);
