@@ -183,41 +183,54 @@ function decodedCount(): number {
   return n;
 }
 
-function noteRegion(box: SymbolBox, now: number, decoded = true, info?: SymbolInfo): void {
-  for (const r of regions) {
+function findMatchingRegion(box: SymbolBox): Region | undefined {
+  return regions.find((r) => {
     const dx = Math.abs(box.x + box.w / 2 - (r.x + r.w / 2));
     const dy = Math.abs(box.y + box.h / 2 - (r.y + r.h / 2));
-    if (dx < Math.max(box.w, r.w) / 2 && dy < Math.max(box.h, r.h) / 2) {
-      if (!decoded) {
-        // A sighting is an eyewitness report, not a measurement: enough to
-        // keep the region alive, never enough to move or resize it. zxing's
-        // failed quads are routinely clipped or wildly mis-sized, and one
-        // overwriting a decode-proven box aims every following crop at
-        // garbage — a measured 6× throughput collapse on a 4-code grid.
-        r.seen = now;
-        return;
-      }
-      // Half-life blend of per-decode displacement: steady hands decay it to
-      // zero, a moving hand keeps the crop padding wide (see captureFrame).
-      r.drift = 0.5 * (r.drift ?? 0) + 0.5 * Math.hypot(dx, dy);
-      Object.assign(r, box, { seen: now });
-      r.decoded = true;
-      if (info?.quad) r.quad = info.quad;
-      if (info?.modules) r.dim = info.modules;
-      return;
-    }
-  }
+    return dx < Math.max(box.w, r.w) / 2 && dy < Math.max(box.h, r.h) / 2;
+  });
+}
+
+function updateMatchedRegion(r: Region, box: SymbolBox, now: number, decoded: boolean, info?: SymbolInfo): void {
   if (!decoded) {
-    // A sighting may only FOUND a region when it looks like the codes this
-    // stream already decodes: grid codes are same-version and same-size on
-    // screen, so a quad far off a decode-proven code's size is detector
-    // noise. With nothing decoded yet there is no yardstick — full scans own
-    // acquisition then, and phantom regions would only starve them.
-    const reference = regions.find((r) => r.decoded);
-    if (!reference) return;
-    const ratio = Math.max(box.w, box.h) / Math.max(reference.w, reference.h);
-    if (ratio < 0.5 || ratio > 2) return;
+    // A sighting is an eyewitness report, not a measurement: enough to
+    // keep the region alive, never enough to move or resize it. zxing's
+    // failed quads are routinely clipped or wildly mis-sized, and one
+    // overwriting a decode-proven box aims every following crop at
+    // garbage — a measured 6× throughput collapse on a 4-code grid.
+    r.seen = now;
+    return;
   }
+  const dx = Math.abs(box.x + box.w / 2 - (r.x + r.w / 2));
+  const dy = Math.abs(box.y + box.h / 2 - (r.y + r.h / 2));
+  // Half-life blend of per-decode displacement: steady hands decay it to
+  // zero, a moving hand keeps the crop padding wide (see captureFrame).
+  r.drift = 0.5 * (r.drift ?? 0) + 0.5 * Math.hypot(dx, dy);
+  Object.assign(r, box, { seen: now });
+  r.decoded = true;
+  if (info?.quad) r.quad = info.quad;
+  if (info?.modules) r.dim = info.modules;
+}
+
+/** A sighting may only FOUND a region when it looks like the codes this
+ *  stream already decodes: grid codes are same-version and same-size on
+ *  screen, so a quad far off a decode-proven code's size is detector noise.
+ *  With nothing decoded yet there is no yardstick — full scans own
+ *  acquisition then, and phantom regions would only starve them. */
+function isPlausibleSighting(box: SymbolBox): boolean {
+  const reference = regions.find((r) => r.decoded);
+  if (!reference) return false;
+  const ratio = Math.max(box.w, box.h) / Math.max(reference.w, reference.h);
+  return ratio >= 0.5 && ratio <= 2;
+}
+
+function noteRegion(box: SymbolBox, now: number, decoded = true, info?: SymbolInfo): void {
+  const match = findMatchingRegion(box);
+  if (match) {
+    updateMatchedRegion(match, box, now, decoded, info);
+    return;
+  }
+  if (!decoded && !isPlausibleSighting(box)) return;
   regions.push({ ...box, seen: now, decoded, quad: info?.quad, dim: info?.modules });
   if (regions.length > MAX_REGIONS) {
     regions.sort((a, b) => Number(b.decoded) - Number(a.decoded) || b.seen - a.seen);
@@ -445,10 +458,9 @@ async function start() {
     }
   } catch (err) {
     const denied = err instanceof DOMException && err.name === "NotAllowedError";
+    const errMessage = err instanceof Error ? err.message : String(err);
     offerRetry(
-      denied
-        ? "camera permission denied — allow it, then tap Start camera again."
-        : `camera: ${err instanceof Error ? err.message : String(err)}`,
+      denied ? "camera permission denied — allow it, then tap Start camera again." : `camera: ${errMessage}`,
     );
     return;
   }
@@ -601,80 +613,65 @@ function submitBitmap(
 // thing requiring main-thread pixel access. Duplicates now cost one cheap
 // tracked decode each, which the pool absorbs without noticing.
 
-function captureFrame() {
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  if (!vw || !vh) return;
-  const now = performance.now();
-  captureTimes.push(now);
-  totalCaptures++;
-  if (pool.busyCount === pool.size) {
-    capturesDropped++;
-    return; // all busy — drop it, no harm done
-  }
-
+function pruneStaleRegions(now: number): void {
   for (let i = regions.length - 1; i >= 0; i--) {
     if (now - regions[i]!.seen > REGION_TTL_MS) regions.splice(i, 1);
   }
-  // Only decode-proven regions count toward "how many codes does this stream
-  // show" — phantom sighting regions once inflated the total and locked the
-  // receiver into a permanent 250 ms rescan storm. peakRegions is reported as
-  // the stream's code count, so it counts proven regions for the same reason.
-  const live = decodedCount();
-  peakRegions = Math.max(peakRegions, live);
+}
+
+function updateExpectedRegions(live: number, now: number): void {
   if (live >= expectedRegions || now - expectedRegionsAt > EXPECTED_REGIONS_DECAY_MS) {
     expectedRegions = live;
     expectedRegionsAt = now;
   }
-  const scanInterval =
-    live === 0
-      ? ACQUISITION_SCAN_MS
-      : live < expectedRegions
-        ? FULL_SCAN_DEGRADED_MS
-        : FULL_SCAN_INTERVAL_MS;
-  // A due full scan takes priority over crops, deliberately. The crop loop
-  // below fills every free worker slot each frame, so any "only scan when a
-  // slot is spare" politeness starves the rescan that reacquires a missing
-  // code — tried, and it measurably worsened multi-code lock-on. Scans are
-  // rare (1.5 s healthy, 250 ms degraded, 100 ms cold); crops keep the slot
-  // next frame — including crops of probationary sighting regions, which now
-  // run between cold scans instead of being crowded out by them.
-  const fullScanDue = now - lastFullScan > scanInterval;
+}
 
-  if (BITMAP_CAPTURE) {
-    if (fullScanDue) {
-      lastFullScan = now;
-      fullScans++;
-      submitBitmap(createImageBitmap(video), { ox: 0, oy: 0, full: true });
-      return;
-    }
-    // The bitmaps resolve async, so "stop when the pool refuses" becomes
-    // "create no more than the free slots seen now" — submitBitmap closes
-    // any bitmap that loses the race anyway.
-    let free = pool.size - pool.busyCount;
-    for (let i = 0; i < regions.length && free > 0; i++) {
-      const r = regions[(i + cropRotate) % regions.length]!;
-      const size = Math.max(r.w, r.h);
-      const pad = Math.round(size * REGION_PAD + Math.min(size, 2 * (r.drift ?? 0)));
-      const x = Math.max(0, Math.floor(r.x - pad));
-      const y = Math.max(0, Math.floor(r.y - pad));
-      const w = Math.min(vw - x, Math.ceil(r.w + 2 * pad));
-      const h = Math.min(vh - y, Math.ceil(r.h + 2 * pad));
-      if (w < 32 || h < 32) continue;
-      free--;
-      submitBitmap(createImageBitmap(video, x, y, w, h), {
-        ox: x,
-        oy: y,
-        full: false,
-        quad: r.quad,
-        dim: r.dim,
-      });
-    }
-    cropRotate++;
+function computeScanInterval(live: number): number {
+  if (live === 0) return ACQUISITION_SCAN_MS;
+  if (live < expectedRegions) return FULL_SCAN_DEGRADED_MS;
+  return FULL_SCAN_INTERVAL_MS;
+}
+
+/** GPU-side capture path: one crop per known code, rotated so a short worker
+ *  pool doesn't starve the same tail region every frame. The bitmaps resolve
+ *  async, so "stop when the pool refuses" becomes "create no more than the
+ *  free slots seen now" — submitBitmap closes any bitmap that loses the race
+ *  anyway. */
+function captureFrameBitmap(vw: number, vh: number, now: number, fullScanDue: boolean): void {
+  if (fullScanDue) {
+    lastFullScan = now;
+    fullScans++;
+    submitBitmap(createImageBitmap(video), { ox: 0, oy: 0, full: true });
     return;
   }
+  let free = pool.size - pool.busyCount;
+  for (let i = 0; i < regions.length && free > 0; i++) {
+    const r = regions[(i + cropRotate) % regions.length]!;
+    // The pad leads a moving target: base margin plus twice the displacement
+    // observed between the region's last decodes, so a handheld receiver's
+    // crops keep containing the code instead of chasing where it was. Capped
+    // at one code size — past that the crop approaches frame-sized anyway.
+    const size = Math.max(r.w, r.h);
+    const pad = Math.round(size * REGION_PAD + Math.min(size, 2 * (r.drift ?? 0)));
+    const x = Math.max(0, Math.floor(r.x - pad));
+    const y = Math.max(0, Math.floor(r.y - pad));
+    const w = Math.min(vw - x, Math.ceil(r.w + 2 * pad));
+    const h = Math.min(vh - y, Math.ceil(r.h + 2 * pad));
+    if (w < 32 || h < 32) continue;
+    free--;
+    submitBitmap(createImageBitmap(video, x, y, w, h), {
+      ox: x,
+      oy: y,
+      full: false,
+      quad: r.quad,
+      dim: r.dim,
+    });
+  }
+  cropRotate++;
+}
 
-  // ---- Readback fallback: browsers without createImageBitmap/OffscreenCanvas.
+/** Readback fallback for browsers without createImageBitmap/OffscreenCanvas. */
+function captureFrameReadback(vw: number, vh: number, now: number, fullScanDue: boolean): void {
   if (grab.width !== vw || grab.height !== vh) {
     grab.width = vw;
     grab.height = vh;
@@ -696,10 +693,6 @@ function captureFrame() {
   // the fountain absorbs whatever gets dropped.
   for (let i = 0; i < regions.length; i++) {
     const r = regions[(i + cropRotate) % regions.length]!;
-    // The pad leads a moving target: base margin plus twice the displacement
-    // observed between the region's last decodes, so a handheld receiver's
-    // crops keep containing the code instead of chasing where it was. Capped
-    // at one code size — past that the crop approaches frame-sized anyway.
     const size = Math.max(r.w, r.h);
     const pad = Math.round(size * REGION_PAD + Math.min(size, 2 * (r.drift ?? 0)));
     const x = Math.max(0, Math.floor(r.x - pad));
@@ -719,6 +712,42 @@ function captureFrame() {
     cropsSubmitted++;
   }
   cropRotate++;
+}
+
+function captureFrame() {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return;
+  const now = performance.now();
+  captureTimes.push(now);
+  totalCaptures++;
+  if (pool.busyCount === pool.size) {
+    capturesDropped++;
+    return; // all busy — drop it, no harm done
+  }
+
+  pruneStaleRegions(now);
+  // Only decode-proven regions count toward "how many codes does this stream
+  // show" — phantom sighting regions once inflated the total and locked the
+  // receiver into a permanent 250 ms rescan storm. peakRegions is reported as
+  // the stream's code count, so it counts proven regions for the same reason.
+  const live = decodedCount();
+  peakRegions = Math.max(peakRegions, live);
+  updateExpectedRegions(live, now);
+  // A due full scan takes priority over crops, deliberately. The crop loop
+  // below fills every free worker slot each frame, so any "only scan when a
+  // slot is spare" politeness starves the rescan that reacquires a missing
+  // code — tried, and it measurably worsened multi-code lock-on. Scans are
+  // rare (1.5 s healthy, 250 ms degraded, 100 ms cold); crops keep the slot
+  // next frame — including crops of probationary sighting regions, which now
+  // run between cold scans instead of being crowded out by them.
+  const fullScanDue = now - lastFullScan > computeScanInterval(live);
+
+  if (BITMAP_CAPTURE) {
+    captureFrameBitmap(vw, vh, now, fullScanDue);
+  } else {
+    captureFrameReadback(vw, vh, now, fullScanDue);
+  }
 }
 
 function onDecoded(bytes: Uint8Array, box?: SymbolBox, info?: SymbolInfo) {
@@ -782,12 +811,14 @@ function updateProgressEstimate() {
     `${shownPercent}% · ${decoder.solvedCount}/${decoder.k} blocks`;
   // Held back for the first few frames — a two-frame sample reads wildly wrong.
   const rate = decoder.framesNew >= 4 ? ` · ${goodputKbs(elapsed).toFixed(1)} KB/s` : "";
-  etaLabel.textContent =
-    (estimate.etaSeconds === undefined
-      ? estimate.phase === "decoding"
-        ? `${decoder.framesNew} frames · decoding`
-        : "Estimating time…"
-      : `About ${formatDuration(estimate.etaSeconds)} · ${decoder.framesNew} frames`) + rate;
+  let etaText: string;
+  if (estimate.etaSeconds === undefined) {
+    etaText =
+      estimate.phase === "decoding" ? `${decoder.framesNew} frames · decoding` : "Estimating time…";
+  } else {
+    etaText = `About ${formatDuration(estimate.etaSeconds)} · ${decoder.framesNew} frames`;
+  }
+  etaLabel.textContent = etaText + rate;
 }
 
 /** Payload KB/s, discounting the frames the fountain spends on overhead. That
@@ -804,94 +835,88 @@ function goodputKbs(elapsed: number): number {
   );
 }
 
-async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
-  done = true;
-  captureGen++;
-  // npm run diagnostics: one JSON report per completed run, POSTed to the dev
-  // server so it lands in the terminal (build/diagnostics-endpoint.ts). Sent
-  // before teardown, while the camera settings and pool size are still real.
-  // The DEV guard is load-bearing: import.meta.env.DEV is statically false in
-  // every build, so this whole branch is compiled out of the static site, the
-  // GitHub Pages deploy, and the standalone files.
-  if (import.meta.env.DEV && import.meta.env.VITE_DIAGNOSTICS === "1") {
-    const track = stream?.getVideoTracks()[0];
-    const camera = track?.getSettings();
-    // What the sender emitted while we watched, by seq range — against the
-    // frames we actually parsed, that is the receiver's catch rate. A low
-    // catch rate means the receiver missed displayed frames (capacity or
-    // tracking); overhead high with a high catch rate blames the fountain.
-    const seqSpan = maxSeq >= minSeq ? maxSeq - minSeq + 1 : 0;
-    const parsed = (decoder?.framesNew ?? 0) + (decoder?.framesDup ?? 0);
-    void fetch("/__diagnostics", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        role: "receiver",
-        when: new Date().toISOString(),
-        sessionId: reportSessionId,
-        ok: hashOk,
-        seconds: Number(seconds.toFixed(2)),
-        acquisitionSeconds: cameraStartedTs
-          ? Number(((startTs - cameraStartedTs) / 1000).toFixed(2))
+// What the sender emitted while we watched, by seq range — against the
+// frames we actually parsed, that is the receiver's catch rate. A low catch
+// rate means the receiver missed displayed frames (capacity or tracking);
+// overhead high with a high catch rate blames the fountain.
+function reportDiagnostics(container: Uint8Array, hashOk: boolean, seconds: number): void {
+  const track = stream?.getVideoTracks()[0];
+  const camera = track?.getSettings();
+  const seqSpan = maxSeq >= minSeq ? maxSeq - minSeq + 1 : 0;
+  const parsed = (decoder?.framesNew ?? 0) + (decoder?.framesDup ?? 0);
+  void fetch("/__diagnostics", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      role: "receiver",
+      when: new Date().toISOString(),
+      sessionId: reportSessionId,
+      ok: hashOk,
+      seconds: Number(seconds.toFixed(2)),
+      acquisitionSeconds: cameraStartedTs
+        ? Number(((startTs - cameraStartedTs) / 1000).toFixed(2))
+        : null,
+      payloadBytes: container.length,
+      // The container's embedded file digest (packFile writes it at byte
+      // 17) — benchmark promotion pins the canonical payload against this.
+      // subarray is a view (no copy); Array.from's mapfn avoids a second pass.
+      payloadSha256: Array.from(container.subarray(17, 49), (b) =>
+        b.toString(16).padStart(2, "0"),
+      ).join(""),
+      goodputKBs: Number((container.length / 1024 / Math.max(0.01, seconds)).toFixed(1)),
+      fountain: {
+        k: decoder?.k,
+        blockLen: decoder?.blockLen,
+        framesNew: decoder?.framesNew,
+        framesDup: decoder?.framesDup,
+        framesRedundant: decoder?.framesRedundant,
+        overhead: decoder ? Number((decoder.framesNew / decoder.k).toFixed(2)) : null,
+        usefulOverhead: decoder
+          ? Number(((decoder.framesNew - decoder.framesRedundant) / decoder.k).toFixed(2))
           : null,
-        payloadBytes: container.length,
-        // The container's embedded file digest (packFile writes it at byte
-        // 17) — benchmark promotion pins the canonical payload against this.
-        payloadSha256: [...container.slice(17, 49)]
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join(""),
-        goodputKBs: Number((container.length / 1024 / Math.max(0.01, seconds)).toFixed(1)),
-        fountain: {
-          k: decoder?.k,
-          blockLen: decoder?.blockLen,
-          framesNew: decoder?.framesNew,
-          framesDup: decoder?.framesDup,
-          framesRedundant: decoder?.framesRedundant,
-          overhead: decoder ? Number((decoder.framesNew / decoder.k).toFixed(2)) : null,
-          usefulOverhead: decoder
-            ? Number(((decoder.framesNew - decoder.framesRedundant) / decoder.k).toFixed(2))
-            : null,
-          seqSpan,
-          catchRate: seqSpan ? Number((parsed / seqSpan).toFixed(3)) : null,
-        },
-        codes: peakRegions,
-        pipeline: {
-          captureMode: BITMAP_CAPTURE ? "bitmap" : "readback",
-          captures: totalCaptures,
-          capturesDroppedPoolBusy: capturesDropped,
-          cropsSubmitted,
-          fullScans,
-          decodes: totalDecodes,
-          trackedAttempts,
-          trackedDecodes,
-          zeroRegionMs,
-          degradedMs,
-        },
-        workers: pool.size,
-        requested: {
-          width: Number(cfgWidth.value),
-          fps: Number(cfgCapFps.value),
-          workers: Number(cfgWorkers.value),
-        },
-        camera: camera
-          ? {
-              width: camera.width,
-              height: camera.height,
-              fps: camera.frameRate,
-              facingMode: camera.facingMode ?? null,
-            }
-          : null,
-        cameraCapabilities: track ? probeCameraCapabilities(track) : null,
-        device: { cores: navigator.hardwareConcurrency ?? null, ua: navigator.userAgent },
-        timelineKey:
-          "seconds, framesNew, solvedBlocks, decodedRegions, trackedRegions, captureFps, decodeFps, fullScansCumulative",
-        timeline,
-      }),
-    }).catch(() => undefined);
-  }
-  // Tear the whole capture pipeline down: the camera, the stats timer, and the
-  // decode pool. Each worker holds its own ~940 KB zxing WASM instance, which
-  // is worth reclaiming on a phone the moment the last frame is in.
+        seqSpan,
+        catchRate: seqSpan ? Number((parsed / seqSpan).toFixed(3)) : null,
+      },
+      codes: peakRegions,
+      pipeline: {
+        captureMode: BITMAP_CAPTURE ? "bitmap" : "readback",
+        captures: totalCaptures,
+        capturesDroppedPoolBusy: capturesDropped,
+        cropsSubmitted,
+        fullScans,
+        decodes: totalDecodes,
+        trackedAttempts,
+        trackedDecodes,
+        zeroRegionMs,
+        degradedMs,
+      },
+      workers: pool.size,
+      requested: {
+        width: Number(cfgWidth.value),
+        fps: Number(cfgCapFps.value),
+        workers: Number(cfgWorkers.value),
+      },
+      camera: camera
+        ? {
+            width: camera.width,
+            height: camera.height,
+            fps: camera.frameRate,
+            facingMode: camera.facingMode ?? null,
+          }
+        : null,
+      cameraCapabilities: track ? probeCameraCapabilities(track) : null,
+      device: { cores: navigator.hardwareConcurrency ?? null, ua: navigator.userAgent },
+      timelineKey:
+        "seconds, framesNew, solvedBlocks, decodedRegions, trackedRegions, captureFps, decodeFps, fullScansCumulative",
+      timeline,
+    }),
+  }).catch(() => undefined);
+}
+
+/** Tear the whole capture pipeline down: the camera, the stats timer, and the
+ *  decode pool. Each worker holds its own ~940 KB zxing WASM instance, which
+ *  is worth reclaiming on a phone the moment the last frame is in. */
+function teardownCapturePipeline(seconds: number): void {
   stream?.getTracks().forEach((t) => t.stop());
   clearInterval(statsTimer);
   statsTimer = undefined;
@@ -907,101 +932,124 @@ async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
   bar.style.width = "100%";
   progressEl.setAttribute("aria-valuenow", "100");
   etaLabel.textContent = `${formatDuration(seconds)} total`;
+}
+
+/** Renders the finished page for a successfully unpacked+verified file. Reading
+ *  order of the finished page: heading, the run's numbers, the thing that
+ *  arrived, Save under it, "Receive another file", and the Transfer summary
+ *  panel last in its natural spot after #result. */
+async function renderReceivedFile(file: OpticalFile, container: Uint8Array, seconds: number): Promise<void> {
+  // The container carries its own media type, so the receiver never has to be
+  // told in advance whether a file or a text snippet is coming.
+  const rate = (container.length / 1024 / seconds).toFixed(1);
+  const gzipNote = file.compression === "gzip" ? "gzip decompressed · " : "";
+  if (isSnippet(file)) {
+    progressLabel.textContent = "100% · text recovered";
+    setStatus("");
+    showSnippet(
+      snippetText(file),
+      `text in ${seconds.toFixed(1)} s · ${rate} KB/s · ${gzipNote}SHA-256 verified ✓`,
+    );
+    return;
+  }
+
+  progressLabel.textContent = "100% · file recovered";
+  const kb = Math.round(file.bytes.length / 1024);
+  // The run's numbers belong under the heading, not up in the camera status
+  // line — which is done for good and goes quiet.
+  setStatus("");
+  const summary = document.createElement("p");
+  summary.className = "hint";
+  summary.textContent =
+    `${kb} KB in ${seconds.toFixed(1)} s · ${rate} KB/s · ${gzipNote}SHA-256 verified ✓`;
+  const heading = document.createElement("div");
+  heading.className = "done";
+  heading.textContent = "Transfer Complete!";
+  const url = URL.createObjectURL(new Blob([file.bytes as BlobPart], { type: file.type }));
+  const download = document.createElement("a");
+  download.className = "download";
+  download.href = url;
+  download.download = file.name;
+  download.textContent = `Save ${file.name}`;
+  result.replaceChildren(heading, summary);
+  if (file.type.startsWith("image/")) {
+    const image = document.createElement("img");
+    image.className = "received";
+    image.alt = `Received file preview: ${file.name}`;
+    image.src = url;
+    result.append(image);
+  } else if (file.type.startsWith("video/") || file.type.startsWith("audio/")) {
+    const player = document.createElement(file.type.startsWith("video/") ? "video" : "audio");
+    player.className = "received";
+    player.controls = true;
+    player.preload = "metadata";
+    player.setAttribute("aria-label", `Received file: ${file.name}`);
+    // Inline, and never autoplay — the user taps play (which is also the
+    // gesture that lets it start with sound).
+    if (player instanceof HTMLVideoElement) player.playsInline = true;
+    const src = await servableMediaUrl(file, url);
+    if (src !== url) {
+      // AVFoundation has been seen bypassing service workers for media
+      // loads; if the cache path 404s, fall back to the blob rather than
+      // leaving a dead player.
+      player.addEventListener("error", () => { player.src = url; }, { once: true });
+    }
+    player.src = src;
+    result.append(player);
+  }
+  const actions = document.createElement("div");
+  actions.className = "note-actions";
+  actions.append(download);
+  const endActions = document.createElement("div");
+  endActions.className = "note-actions pair";
+  endActions.append(restartButton("Receive another file"));
+  // The received bytes sit in the Cache API so the media player can range
+  // over them (see servableMediaUrl) — which means they outlive the page.
+  // Offer the scrub right where the transfer ends.
+  if ("caches" in window) endActions.append(clearCacheButton());
+  result.append(actions, endActions);
+  const support = supportLink();
+  if (support) result.append(support);
+}
+
+/** Everything is already torn down by this point, so the only way back to a
+ *  live receiver is a reload. Offer it: a failed checksum used to leave the
+ *  page dead with nothing but an error string on it. */
+function renderTransferFailure(error: unknown): void {
+  bar.classList.add("error");
+  etaLabel.textContent = "Transfer failed";
+  showError(error instanceof Error ? error.message : String(error));
+  const heading = document.createElement("div");
+  heading.className = "failed";
+  heading.textContent = "Transfer failed";
+  const detail = document.createElement("p");
+  detail.className = "received-note";
+  detail.textContent =
+    "Nothing usable came out of that stream. Restart the sender, then scan it again — " +
+    "a partial transfer costs nothing but the time.";
+  result.replaceChildren(heading, detail, restartButton("Try again"));
+}
+
+async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
+  done = true;
+  captureGen++;
+  // npm run diagnostics: one JSON report per completed run, POSTed to the dev
+  // server so it lands in the terminal (build/diagnostics-endpoint.ts). Sent
+  // before teardown, while the camera settings and pool size are still real.
+  // The DEV guard is load-bearing: import.meta.env.DEV is statically false in
+  // every build, so this whole branch is compiled out of the static site, the
+  // GitHub Pages deploy, and the standalone files.
+  if (import.meta.env.DEV && import.meta.env.VITE_DIAGNOSTICS === "1") {
+    reportDiagnostics(container, hashOk, seconds);
+  }
+  teardownCapturePipeline(seconds);
   try {
     if (!hashOk) throw new Error("The optical stream checksum did not match.");
     const file = await unpackFile(container);
     if (!(await verifyFile(file))) throw new Error("The recovered file failed SHA-256 verification.");
-
-    // The container carries its own media type, so the receiver never has to be
-    // told in advance whether a file or a text snippet is coming.
-    const rate = (container.length / 1024 / seconds).toFixed(1);
-    const gzipNote = file.compression === "gzip" ? "gzip decompressed · " : "";
-    if (isSnippet(file)) {
-      progressLabel.textContent = "100% · text recovered";
-      setStatus("");
-      showSnippet(
-        snippetText(file),
-        `text in ${seconds.toFixed(1)} s · ${rate} KB/s · ${gzipNote}SHA-256 verified ✓`,
-      );
-      return;
-    }
-
-    progressLabel.textContent = "100% · file recovered";
-    const kb = Math.round(file.bytes.length / 1024);
-    // The run's numbers belong under the heading, not up in the camera status
-    // line — which is done for good and goes quiet.
-    setStatus("");
-    const summary = document.createElement("p");
-    summary.className = "hint";
-    summary.textContent =
-      `${kb} KB in ${seconds.toFixed(1)} s · ${rate} KB/s · ${gzipNote}SHA-256 verified ✓`;
-    const heading = document.createElement("div");
-    heading.className = "done";
-    heading.textContent = "Transfer Complete!";
-    const url = URL.createObjectURL(new Blob([file.bytes as BlobPart], { type: file.type }));
-    const download = document.createElement("a");
-    download.className = "download";
-    download.href = url;
-    download.download = file.name;
-    download.textContent = `Save ${file.name}`;
-    // Reading order of the finished page: heading, the run's numbers, the
-    // thing that arrived, Save under it, "Receive another file", and the
-    // Transfer summary panel last in its natural spot after #result.
-    result.replaceChildren(heading, summary);
-    if (file.type.startsWith("image/")) {
-      const image = document.createElement("img");
-      image.className = "received";
-      image.alt = `Received file preview: ${file.name}`;
-      image.src = url;
-      result.append(image);
-    } else if (file.type.startsWith("video/") || file.type.startsWith("audio/")) {
-      const player = document.createElement(file.type.startsWith("video/") ? "video" : "audio");
-      player.className = "received";
-      player.controls = true;
-      player.preload = "metadata";
-      player.setAttribute("aria-label", `Received file: ${file.name}`);
-      // Inline, and never autoplay — the user taps play (which is also the
-      // gesture that lets it start with sound).
-      if (player instanceof HTMLVideoElement) player.playsInline = true;
-      const src = await servableMediaUrl(file, url);
-      if (src !== url) {
-        // AVFoundation has been seen bypassing service workers for media
-        // loads; if the cache path 404s, fall back to the blob rather than
-        // leaving a dead player.
-        player.addEventListener("error", () => { player.src = url; }, { once: true });
-      }
-      player.src = src;
-      result.append(player);
-    }
-    const actions = document.createElement("div");
-    actions.className = "note-actions";
-    actions.append(download);
-    const endActions = document.createElement("div");
-    endActions.className = "note-actions pair";
-    endActions.append(restartButton("Receive another file"));
-    // The received bytes sit in the Cache API so the media player can range
-    // over them (see servableMediaUrl) — which means they outlive the page.
-    // Offer the scrub right where the transfer ends.
-    if ("caches" in window) endActions.append(clearCacheButton());
-    result.append(actions, endActions);
-    const support = supportLink();
-    if (support) result.append(support);
+    await renderReceivedFile(file, container, seconds);
   } catch (error) {
-    // Everything is already torn down by this point, so the only way back to a
-    // live receiver is a reload. Offer it: a failed checksum used to leave the
-    // page dead with nothing but an error string on it.
-    bar.classList.add("error");
-    etaLabel.textContent = "Transfer failed";
-    showError(error instanceof Error ? error.message : String(error));
-    const heading = document.createElement("div");
-    heading.className = "failed";
-    heading.textContent = "Transfer failed";
-    const detail = document.createElement("p");
-    detail.className = "received-note";
-    detail.textContent =
-      "Nothing usable came out of that stream. Restart the sender, then scan it again — " +
-      "a partial transfer costs nothing but the time.";
-    result.replaceChildren(heading, detail, restartButton("Try again"));
+    renderTransferFailure(error);
   }
 }
 

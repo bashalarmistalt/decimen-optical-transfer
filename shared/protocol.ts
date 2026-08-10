@@ -348,8 +348,8 @@ export function streamIdentity(h: FrameHeader): string {
 
 export function fnv1a(bytes: Uint8Array): number {
   let h = 0x811c9dc5;
-  for (let i = 0; i < bytes.length; i++) {
-    h ^= bytes[i]!;
+  for (const byte of bytes) {
+    h ^= byte;
     h = Math.imul(h, 0x01000193);
   }
   return h >>> 0;
@@ -357,7 +357,7 @@ export function fnv1a(bytes: Uint8Array): number {
 
 /** splitmix32 — deterministic across JS engines (integer ops only). */
 export function splitmix32(seed: number): () => number {
-  let s = seed | 0;
+  let s = Math.trunc(seed);
   return () => {
     s = (s + 0x9e3779b9) | 0;
     let t = s ^ (s >>> 16);
