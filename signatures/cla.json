@@ -1,3 +1,12 @@
 {
-   "signedContributors": []
+  "signedContributors": [
+    {
+      "name": "LightYagami28",
+      "id": 71499553,
+      "comment_id": 5239994785,
+      "created_at": "2026-08-10T12:15:28Z",
+      "repoId": 1317563975,
+      "pullRequestNo": 33
+    }
+  ]
 }
