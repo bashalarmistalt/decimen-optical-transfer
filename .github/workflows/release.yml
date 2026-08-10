@@ -29,8 +29,14 @@ jobs:
       - run: npm run build:all
 
       - name: Package artifacts
+        # TAG travels through env, not string-interpolated into the script:
+        # a tag name (or the free-text workflow_dispatch input) can contain
+        # shell metacharacters — git ref names don't forbid $(), backticks or
+        # ; — and splicing it straight into `run:` would let it execute as
+        # code in a job with contents: write.
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
           mkdir -p artifacts
           # The hostable site: unzip onto any static host, or open over a local
           # server. Registers a service worker, so it runs offline after one visit.

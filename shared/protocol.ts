@@ -26,6 +26,20 @@ export const MAX_FILE_BYTES = 64 * 1024 * 1024;
  */
 export const MAX_FILE_LABEL = `${MAX_FILE_BYTES / 1024 / 1024} MB`;
 const FILE_HEADER_LEN = 49;
+/**
+ * Largest `totalLen` any legitimate frame can ever declare: the file cap plus
+ * the container header and the largest possible name + media-type strings
+ * (mirrors the `worstCase` envelope in tests/frame-capacity.test.ts).
+ *
+ * `totalLen` drives an unconditional `new Uint8Array(totalLen)` allocation
+ * plus a full-buffer scan in the fountain decoder (fountain.ts's
+ * `LTDecoder.assemble()`), and it arrives over the optical channel like
+ * everything else — a single forged frame with `totalLen` near the u32 max
+ * and k=1 completes on its own and freezes the tab for minutes allocating and
+ * hashing a multi-gigabyte buffer. Reject anything past what a real transfer
+ * could ever produce before that allocation happens.
+ */
+export const MAX_TOTAL_LEN = MAX_FILE_BYTES + FILE_HEADER_LEN + 2 * 0xffff;
 const MAGIC0 = 0xd1;
 const MAGIC1 = 0x0d; // v2: systematic-carousel fountain (see fountain.ts)
 const FILE_MAGIC = new Uint8Array([0x44, 0x43, 0x46, 0x32]); // DCF2
@@ -310,6 +324,7 @@ export function parseFrame(
     payloadFnv: dv.getUint32(16, true),
   };
   if (header.k === 0 || header.blockLen === 0 || header.totalLen === 0) return null;
+  if (header.totalLen > MAX_TOTAL_LEN) return null; // forged — no real transfer needs this
   if (bytes.length !== HEADER_LEN + header.blockLen) return null;
   return { header, block: bytes.subarray(HEADER_LEN) };
 }

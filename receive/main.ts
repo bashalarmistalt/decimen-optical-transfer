@@ -1049,6 +1049,15 @@ async function servableMediaUrl(file: OpticalFile, blobUrl: string): Promise<str
         headers: {
           "Content-Type": file.type,
           "Content-Length": String(file.bytes.length),
+          // file.type is whatever the sender declared over the optical
+          // channel — the "video/"/"audio/" prefix check above the call site
+          // doesn't stop a value like "video/html". This URL is same-origin
+          // and workbox's CacheOnly route answers ANY request against it, a
+          // direct navigation included, so a spoofed type could otherwise let
+          // a browser's MIME sniffer render attacker HTML as this origin.
+          // nosniff forces the declared type to be honored as opaque media,
+          // never promoted to a document.
+          "X-Content-Type-Options": "nosniff",
         },
       }),
     );

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   HEADER_LEN,
+  MAX_TOTAL_LEN,
   type FrameHeader,
   isPrecompressedType,
   packFile,
@@ -231,4 +232,28 @@ test("frames that are not ours, or not self-consistent, are rejected", () => {
   const zeroK = good.slice();
   new DataView(zeroK.buffer).setUint16(8, 0, true);
   assert.equal(parseFrame(zeroK), null, "k=0 would divide by zero downstream");
+});
+
+test("a forged totalLen past what any real transfer could produce is rejected", () => {
+  // k=1 makes the very first frame self-complete the fountain decoder, so an
+  // unbounded totalLen here drives an unconditional multi-gigabyte
+  // Uint8Array allocation and full-buffer FNV scan on the main thread — a
+  // single crafted QR frame freezing the receiving tab. See MAX_TOTAL_LEN.
+  const atCeiling = packFrame(
+    { sessionId: 1, seq: 0, k: 1, blockLen: 4, totalLen: MAX_TOTAL_LEN, payloadFnv: 0 },
+    new Uint8Array([1, 2, 3, 4]),
+  );
+  assert.ok(parseFrame(atCeiling), "the largest legitimate totalLen must still be accepted");
+
+  const forged = packFrame(
+    { sessionId: 1, seq: 0, k: 1, blockLen: 4, totalLen: MAX_TOTAL_LEN + 1, payloadFnv: 0 },
+    new Uint8Array([1, 2, 3, 4]),
+  );
+  assert.equal(parseFrame(forged), null, "one byte past the ceiling must be rejected");
+
+  const huge = packFrame(
+    { sessionId: 1, seq: 0, k: 1, blockLen: 4, totalLen: 0xffffffff, payloadFnv: 0 },
+    new Uint8Array([1, 2, 3, 4]),
+  );
+  assert.equal(parseFrame(huge), null, "a 4 GB totalLen claim must be rejected");
 });
