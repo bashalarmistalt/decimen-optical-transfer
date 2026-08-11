@@ -28,8 +28,22 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build
-      - uses: actions/configure-pages@v5
+
+      # Before the build, not after: the build bakes the site URL into the
+      # pages, so it has to know where this deployment actually lands.
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      # SITE_URL is not decoration — the sender's "share receiver link" is built
+      # from it, so a build that still carries the upstream decimen.app would
+      # send every scanned link to somebody else's site instead of this one.
+      # Taking it from configure-pages means a project page, a user page and a
+      # custom domain all come out right without editing this file.
+      - name: Build with the deployment's own URL
+        run: npm run build
+        env:
+          VITE_SITE_URL: ${{ steps.pages.outputs.base_url }}/
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
