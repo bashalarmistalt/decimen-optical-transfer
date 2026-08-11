@@ -36,6 +36,14 @@ export interface ParsedSegmentContainer {
   payload: Uint8Array;
 }
 
+export function segmentContainerOverhead(fileName: string, mimeType: string): number {
+  return (
+    FIXED_HEADER_LEN +
+    TEXT_ENCODER.encode(fileName).length +
+    TEXT_ENCODER.encode(mimeType || "application/octet-stream").length
+  );
+}
+
 export function maxSegmentBytes(frameBytes: number): number {
   const payloadPerFrame = blockLength(frameBytes);
   if (!Number.isFinite(payloadPerFrame) || payloadPerFrame <= 0) {
@@ -44,11 +52,14 @@ export function maxSegmentBytes(frameBytes: number): number {
   return payloadPerFrame * MAX_SEGMENT_SOURCE_BLOCKS;
 }
 
-export function planSegments(totalBytes: number, frameBytes: number): SegmentPlan[] {
+export function planSegments(totalBytes: number, frameBytes: number, overheadBytes = 0): SegmentPlan[] {
   if (!Number.isFinite(totalBytes) || totalBytes <= 0) {
     throw new Error("Total bytes must be a positive number.");
   }
-  const maxBytes = maxSegmentBytes(frameBytes);
+  const maxBytes = maxSegmentBytes(frameBytes) - overheadBytes;
+  if (maxBytes <= 0) {
+    throw new Error("Frame capacity is too small for segment metadata.");
+  }
   const count = Math.max(1, Math.ceil(totalBytes / maxBytes));
   const out: SegmentPlan[] = [];
   for (let index = 0; index < count; index++) {

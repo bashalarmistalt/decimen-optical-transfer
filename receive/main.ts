@@ -34,12 +34,15 @@ import {
   verifyFile,
   type OpticalFile,
 } from "../shared/protocol";
+import { isSegmentContainer, parseSegmentContainer } from "../shared/segmented-transfer";
+import { bytesToHex, digestBlob, digestBytes, equalBytes } from "../shared/sha256";
 import { NO_SIGNAL_HINT_FRAME_BYTES, NO_SIGNAL_HINT_TX_FPS } from "../shared/send-settings";
 import { statusLine } from "../shared/status-line";
 import { requestScreenWakeLock } from "../shared/wake-lock";
 import { applyAdvancedConstraint, probeCameraCapabilities } from "../shared/platform";
 import { closeOnBackdropClick } from "../shared/dialog";
 import { supportLink } from "./support";
+import { formatBytes } from "../shared/format";
 
 const startBtn = document.getElementById("start") as HTMLButtonElement;
 const video = document.getElementById("video") as HTMLVideoElement;
@@ -86,6 +89,23 @@ let captureGen = 0;
 let done = false;
 let settingsWired = false;
 let statsTimer: ReturnType<typeof setInterval> | undefined;
+
+interface SegmentedTransferState {
+  key: string;
+  transferIdHex: string;
+  fileName: string;
+  mimeType: string;
+  totalSize: number;
+  fileSha256: Uint8Array;
+  segmentCount: number;
+  segments: (Blob | null)[];
+  segmentHashes: (string | null)[];
+  receivedBytes: number;
+  receivedSegments: number;
+  startedAt: number;
+}
+
+let segmented: SegmentedTransferState | null = null;
 
 const noSignal = new NoSignalHintTimer(NO_SIGNAL_FIRST_MS, NO_SIGNAL_DISMISSED_MS);
 const pool = new DecodeWorkerPool(
@@ -752,9 +772,8 @@ function onDecoded(bytes: Uint8Array, box?: SymbolBox, info?: SymbolInfo) {
 
   if (decoder.isComplete) {
     const payload = decoder.assemble()!;
-    const seconds = (performance.now() - startTs) / 1000;
     const ok = fnv1a(payload) === header.payloadFnv;
-    void finish(payload, ok, seconds);
+    void onCompletedStream(payload, ok);
   }
 }
 
@@ -774,20 +793,31 @@ function updateProgressEstimate() {
     elapsed,
     decoder.solvedCount,
   );
-  const percent = estimate.fraction * 100;
+  const segmentFraction = estimate.fraction;
+  const overallFraction = segmented
+    ? Math.min(
+        1,
+        (segmented.receivedBytes + Math.round(segmentFraction * decoder.totalLen)) / segmented.totalSize,
+      )
+    : segmentFraction;
+  const percent = overallFraction * 100;
   const shownPercent = percent < 10 ? percent.toFixed(1) : percent.toFixed(0);
   bar.style.width = `${percent.toFixed(1)}%`;
   progressEl.setAttribute("aria-valuenow", String(Math.floor(percent)));
-  progressLabel.textContent =
-    `${shownPercent}% · ${decoder.solvedCount}/${decoder.k} blocks`;
+  progressLabel.textContent = segmented
+    ? `${shownPercent}% · segments ${segmented.receivedSegments}/${segmented.segmentCount}`
+    : `${shownPercent}% · ${decoder.solvedCount}/${decoder.k} blocks`;
   // Held back for the first few frames — a two-frame sample reads wildly wrong.
   const rate = decoder.framesNew >= 4 ? ` · ${goodputKbs(elapsed).toFixed(1)} KB/s` : "";
-  etaLabel.textContent =
-    (estimate.etaSeconds === undefined
+  const baseEta =
+    estimate.etaSeconds === undefined
       ? estimate.phase === "decoding"
         ? `${decoder.framesNew} frames · decoding`
         : "Estimating time…"
-      : `About ${formatDuration(estimate.etaSeconds)} · ${decoder.framesNew} frames`) + rate;
+      : `About ${formatDuration(estimate.etaSeconds)} · ${decoder.framesNew} frames`;
+  etaLabel.textContent = segmented
+    ? `${baseEta} · ${formatBytes(segmented.receivedBytes)} / ${formatBytes(segmented.totalSize)}${rate}`
+    : baseEta + rate;
 }
 
 /** Payload KB/s, discounting the frames the fountain spends on overhead. That
@@ -802,6 +832,166 @@ function goodputKbs(elapsed: number): number {
     1024 /
     Math.max(0.1, elapsed)
   );
+}
+
+function resetForNextStream() {
+  decoder = null;
+  streamKey = "";
+}
+
+function segmentedKeyOf(meta: ReturnType<typeof parseSegmentContainer>["meta"]): string {
+  return [
+    bytesToHex(meta.transferId),
+    meta.totalSize,
+    meta.segmentCount,
+    bytesToHex(meta.fileSha256),
+    meta.fileName,
+    meta.mimeType,
+  ].join(":");
+}
+
+async function onCompletedStream(container: Uint8Array, hashOk: boolean) {
+  const streamSeconds = (performance.now() - startTs) / 1000;
+  if (!hashOk) {
+    showError("The optical stream checksum did not match.");
+    resetForNextStream();
+    return;
+  }
+  if (!isSegmentContainer(container)) {
+    if (segmented) {
+      setStatus("Ignoring legacy stream while segmented transfer is in progress.");
+      resetForNextStream();
+      return;
+    }
+    await finish(container, true, streamSeconds);
+    return;
+  }
+  try {
+    await acceptSegmentContainer(container);
+  } catch (error) {
+    showError(error instanceof Error ? error.message : String(error));
+  } finally {
+    resetForNextStream();
+  }
+}
+
+async function acceptSegmentContainer(container: Uint8Array): Promise<void> {
+  const { meta, payload } = parseSegmentContainer(container);
+  const actualSegmentHash = digestBytes(payload);
+  if (!equalBytes(actualSegmentHash, meta.segmentSha256)) {
+    throw new Error(`Segment ${meta.segmentIndex + 1}/${meta.segmentCount} failed SHA-256 verification.`);
+  }
+  const key = segmentedKeyOf(meta);
+  if (!segmented) {
+    segmented = {
+      key,
+      transferIdHex: bytesToHex(meta.transferId),
+      fileName: meta.fileName,
+      mimeType: meta.mimeType,
+      totalSize: meta.totalSize,
+      fileSha256: meta.fileSha256,
+      segmentCount: meta.segmentCount,
+      segments: new Array<Blob | null>(meta.segmentCount).fill(null),
+      segmentHashes: new Array<string | null>(meta.segmentCount).fill(null),
+      receivedBytes: 0,
+      receivedSegments: 0,
+      startedAt: performance.now(),
+    };
+  } else if (segmented.key !== key) {
+    setStatus("Ignoring segment from a different transfer.");
+    return;
+  }
+  const transfer = segmented;
+  if (!transfer) return;
+  const slot = transfer.segments[meta.segmentIndex];
+  const segmentHashHex = bytesToHex(meta.segmentSha256);
+  if (slot) {
+    if (transfer.segmentHashes[meta.segmentIndex] !== segmentHashHex) {
+      throw new Error(`Segment ${meta.segmentIndex + 1}/${meta.segmentCount} conflicts with prior data.`);
+    }
+    setStatus(`Segment ${meta.segmentIndex + 1}/${meta.segmentCount} already received.`);
+    return;
+  }
+  transfer.segments[meta.segmentIndex] = new Blob([payload as BlobPart], { type: "application/octet-stream" });
+  transfer.segmentHashes[meta.segmentIndex] = segmentHashHex;
+  transfer.receivedBytes += meta.segmentLength;
+  transfer.receivedSegments++;
+
+  const elapsed = Math.max(0.1, (performance.now() - transfer.startedAt) / 1000);
+  const pct = Math.min(100, (transfer.receivedBytes / transfer.totalSize) * 100);
+  bar.style.width = `${pct.toFixed(1)}%`;
+  progressEl.setAttribute("aria-valuenow", String(Math.floor(pct)));
+  progressLabel.textContent =
+    `${pct.toFixed(1)}% · segments ${transfer.receivedSegments}/${transfer.segmentCount}`;
+  etaLabel.textContent =
+    `${formatBytes(transfer.receivedBytes)} / ${formatBytes(transfer.totalSize)} · ${(
+      transfer.receivedBytes /
+      1024 /
+      elapsed
+    ).toFixed(1)} KB/s`;
+
+  if (transfer.receivedSegments === transfer.segmentCount) {
+    await finalizeSegmentedTransfer(transfer);
+  } else {
+    setStatus(
+      `Received segment ${meta.segmentIndex + 1}/${meta.segmentCount} · waiting for remaining segments`,
+    );
+  }
+}
+
+async function finalizeSegmentedTransfer(transfer: SegmentedTransferState): Promise<void> {
+  const ordered = transfer.segments;
+  if (ordered.some((part) => !part)) {
+    throw new Error("Segment assembly failed: at least one segment is missing.");
+  }
+  const blob = new Blob(ordered as BlobPart[], { type: transfer.mimeType });
+  if (blob.size !== transfer.totalSize) {
+    throw new Error("Segment assembly failed: reconstructed file size is wrong.");
+  }
+  const actual = await digestBlob(blob);
+  if (!equalBytes(actual, transfer.fileSha256)) {
+    throw new Error("Segment assembly failed: reconstructed file SHA-256 does not match sender hash.");
+  }
+  await finishSegmentedFile(transfer, blob);
+}
+
+async function finishSegmentedFile(transfer: SegmentedTransferState, blob: Blob): Promise<void> {
+  done = true;
+  segmented = null;
+  captureGen++;
+  stream?.getTracks().forEach((t) => t.stop());
+  clearInterval(statsTimer);
+  statsTimer = undefined;
+  pool.resize(0);
+  preview.style.display = "none";
+  settingsEl.style.display = "none";
+  const diagnosticsLabel = diagnosticsEl?.querySelector("summary");
+  if (diagnosticsLabel) diagnosticsLabel.textContent = "Transfer summary";
+  bar.style.width = "100%";
+  progressEl.setAttribute("aria-valuenow", "100");
+  progressLabel.textContent = "100% · file recovered";
+  const seconds = (performance.now() - transfer.startedAt) / 1000;
+  etaLabel.textContent = `${formatDuration(seconds)} total`;
+  setStatus("");
+
+  const rate = (transfer.totalSize / 1024 / Math.max(0.01, seconds)).toFixed(1);
+  const summary = document.createElement("p");
+  summary.className = "hint";
+  summary.textContent = `${Math.round(transfer.totalSize / 1024)} KB in ${seconds.toFixed(1)} s · ${rate} KB/s · SHA-256 verified ✓`;
+  const heading = document.createElement("div");
+  heading.className = "done";
+  heading.textContent = "Transfer Complete!";
+  const url = URL.createObjectURL(blob);
+  const download = document.createElement("a");
+  download.className = "download";
+  download.href = url;
+  download.download = transfer.fileName;
+  download.textContent = `Save ${transfer.fileName}`;
+  result.replaceChildren(heading, summary);
+  const actions = document.createElement("div");
+  actions.className = "note-actions pair";
+  actions.append(download, restartButton("Receive another file"));
+  result.append(actions);
 }
 
 async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
@@ -1153,5 +1343,6 @@ function updateStats() {
   metric("m-frames").textContent = `${decoder.framesNew}/${decoder.framesDup}`;
   metric("m-k").textContent = String(decoder.k);
   metric("m-block").textContent = `${decoder.blockLen} B`;
-  metric("m-payload").textContent = `${Math.round(decoder.totalLen / 1024)} KB`;
+  const payloadBytes = segmented ? segmented.totalSize : decoder.totalLen;
+  metric("m-payload").textContent = `${Math.round(payloadBytes / 1024)} KB`;
 }

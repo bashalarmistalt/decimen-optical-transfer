@@ -24,7 +24,7 @@ import {
   smallestSufficientFrameSize,
   sourceBlockCount,
 } from "../shared/frame-capacity";
-import { LTEncoder } from "../shared/fountain";
+import { cycleLength, LTEncoder } from "../shared/fountain";
 import { MAX_SNIPPET_BYTES, MAX_SNIPPET_LABEL, packSnippet } from "../shared/snippet";
 import {
   MAX_FILE_BYTES,
@@ -35,6 +35,15 @@ import {
   type FrameHeader,
   type PackedOpticalFile,
 } from "../shared/protocol";
+import {
+  SEGMENT_PROTOCOL_VERSION,
+  createTransferId,
+  packSegmentContainer,
+  planSegments,
+  segmentContainerOverhead,
+  type SegmentPlan,
+} from "../shared/segmented-transfer";
+import { digestBlob, digestBytes } from "../shared/sha256";
 import { statusLine } from "../shared/status-line";
 import { requestScreenWakeLock } from "../shared/wake-lock";
 import { wireShareDialog } from "../shared/share-dialog";
@@ -84,13 +93,26 @@ const cfgEcc = document.getElementById("cfg-ecc") as HTMLSelectElement;
 const cfgGrid = document.getElementById("cfg-grid") as HTMLSelectElement;
 const cfgSize = document.getElementById("cfg-size") as HTMLInputElement;
 
-let selectedFile: {
+type SelectedSingleFile = {
+  kind: "single";
   name: string;
   size: number;
   payload: Uint8Array;
   compression: "none" | "gzip";
   transmittedSize: number;
-} | null = null;
+};
+
+type SelectedSegmentedFile = {
+  kind: "segmented";
+  name: string;
+  size: number;
+  file: File;
+  mimeType: string;
+  transferId: Uint8Array;
+  fileSha256: Uint8Array;
+};
+
+let selectedFile: SelectedSingleFile | SelectedSegmentedFile | null = null;
 let generation = 0; // bumped on every restart; stale loops see it and die
 let resizeDisplay: (() => void) | null = null;
 
@@ -125,7 +147,9 @@ function updateFilePicker(): void {
   paneFile.classList.toggle("has-file", armed);
   filePickerButton.textContent = armed ? "Stop transfer" : "Select File";
   filePickerLabel.textContent =
-    armed && selectedFile ? `Selected file: ${selectedFile.name}` : `Any file · up to ${MAX_FILE_LABEL}`;
+    armed && selectedFile
+      ? `Selected file: ${selectedFile.name}`
+      : `Any file · single stream up to ${MAX_FILE_LABEL}, segmented above`;
 }
 
 /** Tear the stream down and disarm the picker. The input is cleared so the
@@ -208,22 +232,45 @@ function applyMode(): void {
  */
 async function startSelection(
   status: string,
-  prepare: () => Promise<{ name: string; size: number; packed: PackedOpticalFile }>,
+  prepare: () => Promise<
+    | { mode: "single"; name: string; size: number; packed: PackedOpticalFile }
+    | {
+        mode: "segmented";
+        name: string;
+        size: number;
+        file: File;
+        mimeType: string;
+        transferId: Uint8Array;
+        fileSha256: Uint8Array;
+      }
+  >,
 ): Promise<void> {
   const selectionGeneration = ++generation;
   selectedFile = null;
   stage.hidden = true;
   setStatus(status);
   try {
-    const { name, size, packed } = await prepare();
+    const prepared = await prepare();
     if (selectionGeneration !== generation) return;
-    selectedFile = {
-      name,
-      size,
-      payload: packed.container,
-      compression: packed.compression,
-      transmittedSize: packed.transmittedSize,
-    };
+    selectedFile =
+      prepared.mode === "single"
+        ? {
+            kind: "single",
+            name: prepared.name,
+            size: prepared.size,
+            payload: prepared.packed.container,
+            compression: prepared.packed.compression,
+            transmittedSize: prepared.packed.transmittedSize,
+          }
+        : {
+            kind: "segmented",
+            name: prepared.name,
+            size: prepared.size,
+            file: prepared.file,
+            mimeType: prepared.mimeType || "application/octet-stream",
+            transferId: prepared.transferId,
+            fileSha256: prepared.fileSha256,
+          };
     await startStream(true);
   } catch (error) {
     showError(error instanceof Error ? error.message : String(error));
@@ -236,7 +283,7 @@ async function selectDemo(fileName: string): Promise<void> {
     const response = await fetch(`../${fileName}`);
     if (!response.ok) throw new Error(`could not load ${fileName} (${response.status})`);
     const bytes = new Uint8Array(await response.arrayBuffer());
-    return { name: fileName, size: bytes.length, packed: await packFile(fileName, "image/png", bytes) };
+    return { mode: "single", name: fileName, size: bytes.length, packed: await packFile(fileName, "image/png", bytes) };
   });
 }
 
@@ -251,11 +298,20 @@ async function selectFile(): Promise<void> {
     if (file.size === 0) {
       throw new Error(`${file.name} is empty — there is nothing to send.`);
     }
-    if (file.size > MAX_FILE_BYTES) {
-      throw new Error(`${file.name} is ${formatBytes(file.size)}, over the ${MAX_FILE_LABEL} limit.`);
+    if (file.size <= MAX_FILE_BYTES) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      return { mode: "single", name: file.name, size: file.size, packed: await packFile(file.name, file.type, bytes) };
     }
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    return { name: file.name, size: file.size, packed: await packFile(file.name, file.type, bytes) };
+    const fileSha256 = await digestBlob(file);
+    return {
+      mode: "segmented",
+      name: file.name,
+      size: file.size,
+      file,
+      mimeType: file.type || "application/octet-stream",
+      transferId: createTransferId(),
+      fileSha256,
+    };
   });
   updateFilePicker();
 }
@@ -263,7 +319,7 @@ async function selectFile(): Promise<void> {
 async function selectSnippet(): Promise<void> {
   await startSelection("preparing text snippet…", async () => {
     const packed = await packSnippet(snippetText.value);
-    return { name: "Text snippet", size: packed.originalSize, packed };
+    return { mode: "single", name: "Text snippet", size: packed.originalSize, packed };
   });
 }
 
@@ -331,10 +387,11 @@ async function startStream(revealStage = false) {
     );
     return;
   }
-  const { name, size: fileSize, payload, compression, transmittedSize } = selectedFile;
+  const { name, size: fileSize } = selectedFile;
   if (gen !== generation) return; // superseded while fetching
   const txFps = Number(cfgFps.value);
   const frameBytes = Number(cfgBytes.value);
+  const blockLen = blockLength(frameBytes);
   const ecc = cfgEcc.value as "L" | "M" | "Q" | "H";
   // Grid layouts: 2, 4 or 6 independent fountain frames on screen at once,
   // tiled as same-version QRs. Same header, same capacity math — each code is
@@ -343,34 +400,159 @@ async function startStream(revealStage = false) {
   const gridCodes = Number(cfgGrid.value) || 1;
   const { cols: gridCols, rows: gridRows } = gridDims(gridCodes);
   const displayPx = Number(cfgSize.value);
-
-  const sessionId = (Math.floor(Math.random() * 0xffff) + 1) & 0xffff;
-  const blockLen = blockLength(frameBytes);
-  // Keep selectedFile on this path — raising bytes/frame back up is the fix,
-  // and dropping the pick would hide that.
-  if (!fitsInOneStream(payload.length, frameBytes)) {
-    // Name a setting that is actually in the dropdown, not the bare minimum.
+  const showFrameSizeError = (payloadBytes: number) => {
     const offered = [...cfgBytes.options].map((option) => Number(option.value));
     const suggestion =
-      smallestSufficientFrameSize(payload.length, offered) ?? minimumFrameBytes(payload.length);
+      smallestSufficientFrameSize(payloadBytes, offered) ?? minimumFrameBytes(payloadBytes);
     showError(
-      `${formatBytes(payload.length)} needs ` +
-        `${sourceBlockCount(payload.length, frameBytes).toLocaleString()} blocks at ` +
+      `${formatBytes(payloadBytes)} needs ` +
+        `${sourceBlockCount(payloadBytes, frameBytes).toLocaleString()} blocks at ` +
         `${frameBytes} bytes per frame, and a frame can only number ` +
         `${MAX_SOURCE_BLOCKS.toLocaleString()} of them. ` +
         `Raise bytes / frame to ${suggestion} or more.`,
     );
-    return;
-  }
-  const encoder = new LTEncoder(payload, blockLen, sessionId);
-  const header: FrameHeader = {
-    sessionId,
-    seq: 0,
-    k: encoder.k,
-    blockLen,
-    totalLen: payload.length,
-    payloadFnv: fnv1a(payload),
   };
+
+  type PreparedSegmentStream = {
+    plan: SegmentPlan;
+    payload: Uint8Array;
+    compression: "none";
+    transmittedSize: number;
+    encoder: LTEncoder;
+    header: FrameHeader;
+  };
+
+  let payload: Uint8Array;
+  let compression: "none" | "gzip";
+  let transmittedSize: number;
+  let encoder: LTEncoder;
+  let header: FrameHeader;
+  let segmentPlans: SegmentPlan[] = [{ index: 0, count: 1, offset: 0, length: fileSize }];
+  let segmentIndex = 0;
+  let segmentFramesSent = 0;
+  let segmentFramesBudget = 0;
+  let nextSegmentPromise: Promise<PreparedSegmentStream> | null = null;
+  let nextSegmentReady: PreparedSegmentStream | null = null;
+  let nextSegmentTarget = -1;
+  let maybeRotateSegment: () => void = () => undefined;
+  let nextSeq = 0;
+  let streamStatusLabel = `Streaming ${name}`;
+
+  const applySegment = (prepared: PreparedSegmentStream) => {
+    payload = prepared.payload;
+    compression = prepared.compression;
+    transmittedSize = prepared.transmittedSize;
+    encoder = prepared.encoder;
+    header = prepared.header;
+    segmentIndex = prepared.plan.index;
+    segmentFramesSent = 0;
+    nextSeq = 0;
+    segmentFramesBudget = Math.max(cycleLength(encoder.k) * 2, encoder.k + Math.ceil(encoder.k * 0.35));
+    spec("spec-k").textContent = `K = ${encoder.k}`;
+    if (segmentPlans.length > 1) {
+      spec("spec-compression").textContent =
+        `segmented · ${formatBytes(prepared.plan.length)} (segment ${prepared.plan.index + 1}/${segmentPlans.length})`;
+      spec("spec-payload").textContent =
+        `${name} · ${formatBytes(fileSize)} · ${formatBytes(prepared.plan.offset + prepared.plan.length)} sent window`;
+    }
+    streamStatusLabel =
+      segmentPlans.length > 1
+        ? `Streaming ${name} — segment ${segmentIndex + 1}/${segmentPlans.length}`
+        : `Streaming ${name}`;
+  };
+
+  if (selectedFile.kind === "single") {
+    payload = selectedFile.payload;
+    compression = selectedFile.compression;
+    transmittedSize = selectedFile.transmittedSize;
+    if (!fitsInOneStream(payload.length, frameBytes)) {
+      showFrameSizeError(payload.length);
+      return;
+    }
+    const sessionId = (Math.floor(Math.random() * 0xffff) + 1) & 0xffff;
+    encoder = new LTEncoder(payload, blockLen, sessionId);
+    header = {
+      sessionId,
+      seq: 0,
+      k: encoder.k,
+      blockLen,
+      totalLen: payload.length,
+      payloadFnv: fnv1a(payload),
+    };
+  } else {
+    const segmentedFile = selectedFile;
+    const metaOverhead = segmentContainerOverhead(segmentedFile.name, segmentedFile.mimeType);
+    segmentPlans = planSegments(segmentedFile.size, frameBytes, metaOverhead);
+    const loadSegment = async (plan: SegmentPlan): Promise<PreparedSegmentStream> => {
+      const part = segmentedFile.file.slice(plan.offset, plan.offset + plan.length);
+      const raw = new Uint8Array(await part.arrayBuffer());
+      const segmentSha256 = digestBytes(raw);
+      const packed = packSegmentContainer(
+        {
+          version: SEGMENT_PROTOCOL_VERSION,
+          transferId: segmentedFile.transferId,
+          fileName: segmentedFile.name,
+          mimeType: segmentedFile.mimeType,
+          totalSize: segmentedFile.size,
+          fileSha256: segmentedFile.fileSha256,
+          segmentIndex: plan.index,
+          segmentCount: plan.count,
+          segmentOffset: plan.offset,
+          segmentLength: plan.length,
+          segmentSha256,
+        },
+        raw,
+      );
+      if (!fitsInOneStream(packed.length, frameBytes)) {
+        throw new Error("Current frame size is too small for segmented metadata.");
+      }
+      const sessionId = (Math.floor(Math.random() * 0xffff) + 1) & 0xffff;
+      const localEncoder = new LTEncoder(packed, blockLen, sessionId);
+      return {
+        plan,
+        payload: packed,
+        compression: "none",
+        transmittedSize: plan.length,
+        encoder: localEncoder,
+        header: {
+          sessionId,
+          seq: 0,
+          k: localEncoder.k,
+          blockLen,
+          totalLen: packed.length,
+          payloadFnv: fnv1a(packed),
+        },
+      };
+    };
+    const first = await loadSegment(segmentPlans[0]!);
+    if (gen !== generation) return;
+    applySegment(first);
+    const queueNextSegment = () => {
+      if (segmentPlans.length <= 1) return;
+      const next = (segmentIndex + 1) % segmentPlans.length;
+      if (nextSegmentPromise || nextSegmentTarget === next) return;
+      nextSegmentTarget = next;
+      nextSegmentPromise = loadSegment(segmentPlans[next]!)
+        .then((prepared) => {
+          nextSegmentReady = prepared;
+          return prepared;
+        })
+        .finally(() => {
+          nextSegmentPromise = null;
+        });
+    };
+    queueNextSegment();
+    maybeRotateSegment = () => {
+      if (segmentPlans.length <= 1) return;
+      if (segmentFramesSent < segmentFramesBudget) return;
+      if (!nextSegmentReady) return;
+      const prepared = nextSegmentReady;
+      nextSegmentReady = null;
+      applySegment(prepared);
+      setStatus(streamStatusLabel);
+      queueNextSegment();
+    };
+  }
 
   let version: number | undefined; // locked after the first frame
   let modules = 0;
@@ -381,7 +563,6 @@ async function startStream(revealStage = false) {
   // the same dimensions), so a mid-stream resize repaints from here instead of
   // leaving blank cells until the stagger rotation reaches them again.
   const cells: (ImageData | null)[] = new Array<ImageData | null>(gridCodes).fill(null);
-  let nextSeq = 0;
   stage.hidden = false;
 
   const sizeCanvas = () => {
@@ -445,8 +626,10 @@ async function startStream(revealStage = false) {
   };
 
   const makeCode = (): ReturnType<typeof QRCode.create> => {
+    maybeRotateSegment();
     const bytes = packFrame({ ...header, seq: nextSeq }, encoder.encode(nextSeq));
     nextSeq++;
+    segmentFramesSent++;
     // Every code carries the same byte length at the same ECC with the same
     // pinned mask, so once the first one locks the version every later
     // QRCode.create lands on identical geometry — required for tiling.
@@ -483,7 +666,7 @@ async function startStream(revealStage = false) {
       // The tail of the status line is the door to the share dialog. Built by
       // hand because setStatus is textContent-only — and the next setStatus
       // wiping the button out is exactly right.
-      setStatus(`Streaming ${name} — `);
+      setStatus(`${streamStatusLabel} — `);
       const share = document.createElement("button");
       share.type = "button";
       share.className = "text-button";
@@ -503,7 +686,7 @@ async function startStream(revealStage = false) {
           body: JSON.stringify({
             role: "sender",
             when: new Date().toISOString(),
-            sessionId,
+            sessionId: header.sessionId,
             payload: {
               name,
               fileBytes: fileSize,
@@ -594,7 +777,7 @@ async function startStream(revealStage = false) {
             role: "sender",
             event: "stall",
             when: new Date().toISOString(),
-            sessionId,
+            sessionId: header.sessionId,
             stallSeconds: Number((sinceLastTick / 1000).toFixed(1)),
           }),
         }).catch(() => undefined);
