@@ -35,6 +35,7 @@ import {
   type OpticalFile,
 } from "../shared/protocol";
 import { isSegmentContainer, parseSegmentContainer } from "../shared/segmented-transfer";
+import { gunzipBytes } from "../shared/compression";
 import { bytesToHex, digestBlob, digestBytes, equalBytes } from "../shared/sha256";
 import { NO_SIGNAL_HINT_FRAME_BYTES, NO_SIGNAL_HINT_TX_FPS } from "../shared/send-settings";
 import { statusLine } from "../shared/status-line";
@@ -876,7 +877,17 @@ async function onCompletedStream(container: Uint8Array, hashOk: boolean) {
 }
 
 async function acceptSegmentContainer(container: Uint8Array): Promise<void> {
-  const { meta, payload } = parseSegmentContainer(container);
+  const { meta, payload: wire } = parseSegmentContainer(container);
+  // The declared segment length is the ceiling, not a hint: these bytes arrived
+  // over the optical channel, so a container claiming 4 KB must not be allowed
+  // to inflate past the 4 KB it reserved in the file.
+  const payload =
+    meta.compression === "gzip" ? await gunzipBytes(wire, meta.segmentLength) : wire;
+  if (payload.length !== meta.segmentLength) {
+    throw new Error(
+      `Segment ${meta.segmentIndex + 1}/${meta.segmentCount} does not match its declared length.`,
+    );
+  }
   const actualSegmentHash = digestBytes(payload);
   if (!equalBytes(actualSegmentHash, meta.segmentSha256)) {
     throw new Error(`Segment ${meta.segmentIndex + 1}/${meta.segmentCount} failed SHA-256 verification.`);

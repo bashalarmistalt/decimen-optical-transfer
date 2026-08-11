@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  MAX_SEGMENT_PAYLOAD_BYTES,
   MAX_SEGMENT_SOURCE_BLOCKS,
   SEGMENT_PROTOCOL_VERSION,
   createTransferId,
@@ -12,6 +13,7 @@ import {
 } from "../shared/segmented-transfer.ts";
 import { blockLength } from "../shared/frame-capacity.ts";
 import { bytesToHex, digestBytes, equalBytes } from "../shared/sha256.ts";
+import { gunzipBytes, gzipBytes } from "../shared/compression.ts";
 
 const FRAME_BYTES = 2953;
 
@@ -56,8 +58,30 @@ test("segment planning leaves last segment shorter when needed", () => {
 });
 
 test("segment capacity uses conservative source-block margin", () => {
-  const perFrame = blockLength(FRAME_BYTES);
-  assert.equal(maxSegmentBytes(FRAME_BYTES), perFrame * MAX_SEGMENT_SOURCE_BLOCKS);
+  // Below ~277 bytes per frame a stream runs out of block numbers before it
+  // reaches the byte cap. No offered setting is that small, so this guards the
+  // branch rather than a reachable configuration.
+  const perFrame = blockLength(200);
+  assert.ok(perFrame * MAX_SEGMENT_SOURCE_BLOCKS < MAX_SEGMENT_PAYLOAD_BYTES);
+  assert.equal(maxSegmentBytes(200), perFrame * MAX_SEGMENT_SOURCE_BLOCKS);
+});
+
+test("segment capacity is byte-capped so neither end holds a huge segment", () => {
+  // At realistic frame sizes the block ceiling is ~190 MB; the byte cap is what
+  // actually bounds a segment, and it must hold for every offered frame size.
+  assert.equal(maxSegmentBytes(FRAME_BYTES), MAX_SEGMENT_PAYLOAD_BYTES);
+  for (const frameBytes of [1273, 1663, 2331, 2953]) {
+    assert.equal(maxSegmentBytes(frameBytes), MAX_SEGMENT_PAYLOAD_BYTES);
+  }
+});
+
+test("a large file plans into segments no bigger than the byte cap", () => {
+  const overhead = segmentContainerOverhead("big.bin", "application/octet-stream");
+  const plan = planSegments(600 * 1024 * 1024, FRAME_BYTES, overhead);
+  for (const segment of plan) {
+    assert.ok(segment.length <= MAX_SEGMENT_PAYLOAD_BYTES);
+  }
+  assert.equal(plan.reduce((n, s) => n + s.length, 0), 600 * 1024 * 1024);
 });
 
 test("segment container round-trips with metadata and payload", () => {
@@ -74,6 +98,8 @@ test("segment container round-trips with metadata and payload", () => {
     segmentOffset: 30_000,
     segmentLength: payload.length,
     segmentSha256: digestBytes(payload),
+    compression: "none" as const,
+    transmittedLength: payload.length,
   };
   const packed = packSegmentContainer(meta, payload);
   const parsed = parseSegmentContainer(packed);
@@ -104,6 +130,8 @@ test("incompatible segment protocol versions are rejected", () => {
       segmentOffset: 0,
       segmentLength: payload.length,
       segmentSha256: digestBytes(payload),
+      compression: "none" as const,
+      transmittedLength: payload.length,
     },
     payload,
   );
@@ -126,11 +154,16 @@ test("corrupted segment metadata lengths are rejected", () => {
       segmentOffset: 0,
       segmentLength: payload.length,
       segmentSha256: digestBytes(payload),
+      compression: "none" as const,
+      transmittedLength: payload.length,
     },
     payload,
   );
   new DataView(packed.buffer).setUint32(37, payload.length + 1, true);
-  assert.throws(() => parseSegmentContainer(packed), /Segment range exceeds total file size|payload length does not match/);
+  assert.throws(
+    () => parseSegmentContainer(packed),
+    /Segment range exceeds total file size|payload length does not match|must carry exactly its own bytes/,
+  );
 });
 
 test("segments from different transfers stay distinguishable", () => {
@@ -146,6 +179,8 @@ test("segments from different transfers stay distinguishable", () => {
     segmentOffset: 0,
     segmentLength: payload.length,
     segmentSha256: digestBytes(payload),
+    compression: "none",
+    transmittedLength: payload.length,
   } as const;
   const a = parseSegmentContainer(packSegmentContainer({ ...shared, transferId: createTransferId() }, payload));
   const b = parseSegmentContainer(packSegmentContainer({ ...shared, transferId: createTransferId() }, payload));
@@ -171,6 +206,8 @@ test("segments can be reassembled out of order and with duplicates", () => {
         segmentOffset: chunks.slice(0, index).reduce((n, c) => n + c.length, 0),
         segmentLength: chunk.length,
         segmentSha256: digestBytes(chunk),
+        compression: "none" as const,
+        transmittedLength: chunk.length,
       },
       chunk,
     ),
@@ -190,4 +227,96 @@ test("segments can be reassembled out of order and with duplicates", () => {
     off += part!.length;
   }
   assert.equal(off, fileBytes);
+});
+
+test("a gzipped segment carries the compressed bytes but the plain hash", async () => {
+  // Highly compressible on purpose: the point is that the wire form is smaller
+  // than the segment while the identity carried in the header is not.
+  const payload = new Uint8Array(64 * 1024).fill(0x5a);
+  const wire = await gzipBytes(payload);
+  assert.ok(wire.length < payload.length);
+
+  const packed = packSegmentContainer(
+    {
+      version: SEGMENT_PROTOCOL_VERSION,
+      transferId: createTransferId(),
+      fileName: "zeros.bin",
+      mimeType: "application/octet-stream",
+      totalSize: payload.length,
+      fileSha256: synthetic(32),
+      segmentIndex: 0,
+      segmentCount: 1,
+      segmentOffset: 0,
+      segmentLength: payload.length,
+      segmentSha256: digestBytes(payload),
+      compression: "gzip",
+      transmittedLength: wire.length,
+    },
+    wire,
+  );
+  assert.ok(packed.length < payload.length);
+
+  const parsed = parseSegmentContainer(packed);
+  assert.equal(parsed.meta.compression, "gzip");
+  assert.equal(parsed.meta.segmentLength, payload.length);
+  assert.equal(parsed.meta.transmittedLength, wire.length);
+
+  const restored = await gunzipBytes(parsed.payload, parsed.meta.segmentLength);
+  assert.equal(equalBytes(restored, payload), true);
+  assert.equal(equalBytes(digestBytes(restored), parsed.meta.segmentSha256), true);
+});
+
+test("a gzip bomb cannot inflate past the declared segment length", async () => {
+  const wire = await gzipBytes(new Uint8Array(512 * 1024));
+  await assert.rejects(() => gunzipBytes(wire, 4096), /expands past its declared length/);
+});
+
+test("an uncompressed segment may not claim a different wire length", () => {
+  const payload = synthetic(2048);
+  assert.throws(
+    () =>
+      packSegmentContainer(
+        {
+          version: SEGMENT_PROTOCOL_VERSION,
+          transferId: createTransferId(),
+          fileName: "x.bin",
+          mimeType: "application/octet-stream",
+          totalSize: payload.length,
+          fileSha256: synthetic(32),
+          segmentIndex: 0,
+          segmentCount: 1,
+          segmentOffset: 0,
+          segmentLength: payload.length + 16,
+          segmentSha256: digestBytes(payload),
+          compression: "none",
+          transmittedLength: payload.length,
+        },
+        payload,
+      ),
+    /must carry exactly its own bytes/,
+  );
+});
+
+test("unsupported compression bytes are rejected", () => {
+  const payload = synthetic(1024);
+  const packed = packSegmentContainer(
+    {
+      version: SEGMENT_PROTOCOL_VERSION,
+      transferId: createTransferId(),
+      fileName: "x.bin",
+      mimeType: "application/octet-stream",
+      totalSize: payload.length,
+      fileSha256: synthetic(32),
+      segmentIndex: 0,
+      segmentCount: 1,
+      segmentOffset: 0,
+      segmentLength: payload.length,
+      segmentSha256: digestBytes(payload),
+      compression: "none",
+      transmittedLength: payload.length,
+    },
+    payload,
+  );
+  packed[117] = 7;
+  assert.throws(() => parseSegmentContainer(packed), /unsupported compression/);
 });

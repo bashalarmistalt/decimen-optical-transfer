@@ -14,7 +14,8 @@ Open it on both devices and go — nothing to install. Works offline after the
 first visit, and installs as an app on both iOS and Android if you want it on
 a home screen.
 
-Files up to 64 MB (or a pasted text snippet), filename and media type
+Files up to 64 MB in a single stream — larger ones split into segments and
+reassembled on arrival — or a pasted text snippet. Filename and media type
 preserved, gzip only when it helps, SHA-256 verified before anything is
 offered — and received video plays right in the page. Currently measured at
 **<!-- speed:begin -->418.5 KB/s sustained<!-- speed:end -->** screen to

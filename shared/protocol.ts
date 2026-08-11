@@ -14,6 +14,8 @@
 //  12  u32  totalLen    protected file-container length in bytes
 //  16  u32  payloadFnv  FNV-1a of the whole container — verified on completion
 
+import { GZIP_MIN_GAIN_BYTES, gunzipBytes, gzipBytes, shouldTryGzip } from "./compression";
+
 export const HEADER_LEN = 20;
 export const MAX_FILE_BYTES = 64 * 1024 * 1024;
 /**
@@ -53,48 +55,6 @@ export interface OpticalFile {
 async function digest(bytes: Uint8Array): Promise<Uint8Array> {
   const stableBytes = Uint8Array.from(bytes);
   return new Uint8Array(await crypto.subtle.digest("SHA-256", stableBytes));
-}
-
-async function gzipAsync(bytes: Uint8Array): Promise<Uint8Array> {
-  const compressed = new Blob([bytes as BlobPart])
-    .stream()
-    .pipeThrough(new CompressionStream("gzip"));
-  return new Uint8Array(await new Response(compressed).arrayBuffer());
-}
-
-/**
- * Inflate with a hard output ceiling.
- *
- * The gzip trailer's declared size is attacker-controlled — it arrives over the
- * optical channel like everything else — so it is a hint, never a bound. This
- * counts bytes as they come off the stream and aborts the moment they exceed
- * `maxBytes`, which the caller has already clamped to MAX_FILE_BYTES. Without
- * this an 80 KB stream could claim to be small and inflate to gigabytes.
- */
-async function gunzipAsync(bytes: Uint8Array, maxBytes: number): Promise<Uint8Array> {
-  const inflated = new Blob([bytes as BlobPart])
-    .stream()
-    .pipeThrough(new DecompressionStream("gzip"));
-  const reader = inflated.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.length;
-    if (total > maxBytes) {
-      await reader.cancel();
-      throw new Error("The recovered file expands past its declared length.");
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return out;
 }
 
 /**
@@ -180,12 +140,12 @@ export async function packFile(
   }
 
   // Too small to be worth a gzip header, or a format gzip cannot help with.
-  const tryGzip = bytes.length >= 768 && !isPrecompressedType(type);
+  const tryGzip = shouldTryGzip(bytes.length, isPrecompressedType(type));
   const [sha256, compressed] = await Promise.all([
     digest(bytes),
-    tryGzip ? gzipAsync(bytes) : Promise.resolve(undefined),
+    tryGzip ? gzipBytes(bytes) : Promise.resolve(undefined),
   ]);
-  const useGzip = compressed !== undefined && compressed.length + 64 < bytes.length;
+  const useGzip = compressed !== undefined && compressed.length + GZIP_MIN_GAIN_BYTES < bytes.length;
   const transmitted = useGzip ? compressed : bytes;
   const compression: CompressionMode = useGzip ? "gzip" : "none";
   const out = new Uint8Array(
@@ -247,7 +207,7 @@ export async function unpackFile(container: Uint8Array): Promise<OpticalFile> {
       throw new Error("The gzip payload length does not match its file header.");
     }
   }
-  const bytes = compression === "gzip" ? await gunzipAsync(transmitted, fileLength) : transmitted;
+  const bytes = compression === "gzip" ? await gunzipBytes(transmitted, fileLength) : transmitted;
   if (bytes.length !== fileLength) {
     throw new Error("The decompressed file length does not match its header.");
   }

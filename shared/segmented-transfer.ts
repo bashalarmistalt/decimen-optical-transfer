@@ -3,12 +3,29 @@ import { blockLength, MAX_SOURCE_BLOCKS } from "./frame-capacity";
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
 const MAGIC = new Uint8Array([0x44, 0x43, 0x53, 0x31]); // DCS1
-const FIXED_HEADER_LEN = 117;
+const FIXED_HEADER_LEN = 122;
 
-export const SEGMENT_PROTOCOL_VERSION = 1;
+// v2 added the compression byte and the on-wire length at the end of the fixed
+// header. v1 receivers reject a v2 container on the version check rather than
+// misreading it, which is the whole point of the byte.
+export const SEGMENT_PROTOCOL_VERSION = 2;
 // Conservative source-block cap: leaves headroom below 0xffff for safety.
 export const SEGMENT_BLOCK_MARGIN = 0x100;
 export const MAX_SEGMENT_SOURCE_BLOCKS = MAX_SOURCE_BLOCKS - SEGMENT_BLOCK_MARGIN;
+
+/**
+ * Byte ceiling on a single segment, independent of the source-block ceiling.
+ *
+ * The block cap alone allows ~190 MB per segment at 2953 bytes/frame, and a
+ * segment is handled whole on both ends: the sender holds the sliced bytes plus
+ * the packed container plus the prefetched next segment, and the receiver holds
+ * a decoder buffer of the same order. That is a mobile out-of-memory, not a
+ * transfer. 16 MiB keeps the sender's live set in the low hundreds of MB while
+ * still being far more than a realistic optical transfer covers in one segment.
+ */
+export const MAX_SEGMENT_PAYLOAD_BYTES = 16 * 1024 * 1024;
+
+export type SegmentCompression = "none" | "gzip";
 
 export interface SegmentPlan {
   index: number;
@@ -27,8 +44,13 @@ export interface SegmentContainerMeta {
   segmentIndex: number;
   segmentCount: number;
   segmentOffset: number;
+  /** Length of the segment in the reassembled file — always the plain byte count. */
   segmentLength: number;
+  /** SHA-256 of the plain segment bytes, never of the compressed form. */
   segmentSha256: Uint8Array;
+  compression: SegmentCompression;
+  /** Bytes actually carried in this container: `segmentLength` unless gzipped. */
+  transmittedLength: number;
 }
 
 export interface ParsedSegmentContainer {
@@ -44,12 +66,19 @@ export function segmentContainerOverhead(fileName: string, mimeType: string): nu
   );
 }
 
+/**
+ * Largest container a segment stream may produce at this frame size.
+ *
+ * Two independent ceilings apply and the smaller wins: how many source blocks a
+ * frame header can number, and how many bytes either end can safely hold at
+ * once. Small frames are bound by the first, everything else by the second.
+ */
 export function maxSegmentBytes(frameBytes: number): number {
   const payloadPerFrame = blockLength(frameBytes);
   if (!Number.isFinite(payloadPerFrame) || payloadPerFrame <= 0) {
     throw new Error("Frame size must exceed the protocol header size.");
   }
-  return payloadPerFrame * MAX_SEGMENT_SOURCE_BLOCKS;
+  return Math.min(payloadPerFrame * MAX_SEGMENT_SOURCE_BLOCKS, MAX_SEGMENT_PAYLOAD_BYTES);
 }
 
 export function planSegments(totalBytes: number, frameBytes: number, overheadBytes = 0): SegmentPlan[] {
@@ -100,8 +129,14 @@ export function packSegmentContainer(meta: SegmentContainerMeta, payload: Uint8A
   if (meta.version !== SEGMENT_PROTOCOL_VERSION) {
     throw new Error(`Unsupported segment protocol version ${meta.version}.`);
   }
-  if (meta.segmentLength !== payload.length) {
+  if (meta.transmittedLength !== payload.length) {
     throw new Error("Segment payload length does not match metadata.");
+  }
+  if (meta.segmentLength <= 0) {
+    throw new Error("Segment length must be non-zero.");
+  }
+  if (meta.compression === "none" && meta.transmittedLength !== meta.segmentLength) {
+    throw new Error("An uncompressed segment must carry exactly its own bytes.");
   }
   if (meta.segmentOffset + meta.segmentLength > meta.totalSize) {
     throw new Error("Segment range exceeds total file size.");
@@ -133,6 +168,8 @@ export function packSegmentContainer(meta: SegmentContainerMeta, payload: Uint8A
   view.setUint16(51, typeBytes.length, true);
   out.set(meta.fileSha256, 53);
   out.set(meta.segmentSha256, 85);
+  view.setUint8(117, meta.compression === "gzip" ? 1 : 0);
+  view.setUint32(118, meta.transmittedLength, true);
 
   let cursor = FIXED_HEADER_LEN;
   out.set(nameBytes, cursor);
@@ -164,18 +201,27 @@ export function parseSegmentContainer(container: Uint8Array): ParsedSegmentConta
   const totalSize = toSafeNumber(view.getBigUint64(41, true), "Total size");
   const nameLen = view.getUint16(49, true);
   const typeLen = view.getUint16(51, true);
+  const compressionByte = view.getUint8(117);
+  const transmittedLength = view.getUint32(118, true);
   const dataOffset = FIXED_HEADER_LEN + nameLen + typeLen;
 
   if (segmentCount === 0 || segmentIndex >= segmentCount) {
     throw new Error("Segment index/count metadata is invalid.");
   }
-  if (segmentLength === 0) {
+  if (segmentLength === 0 || transmittedLength === 0) {
     throw new Error("Segment length must be non-zero.");
+  }
+  if (compressionByte > 1) {
+    throw new Error("The recovered segment uses unsupported compression.");
+  }
+  const compression: SegmentCompression = compressionByte === 1 ? "gzip" : "none";
+  if (compression === "none" && transmittedLength !== segmentLength) {
+    throw new Error("An uncompressed segment must carry exactly its own bytes.");
   }
   if (segmentOffset + segmentLength > totalSize) {
     throw new Error("Segment range exceeds total file size.");
   }
-  if (dataOffset + segmentLength !== container.length) {
+  if (dataOffset + transmittedLength !== container.length) {
     throw new Error("Segment payload length does not match metadata.");
   }
 
@@ -199,6 +245,8 @@ export function parseSegmentContainer(container: Uint8Array): ParsedSegmentConta
       segmentOffset,
       segmentLength,
       segmentSha256,
+      compression,
+      transmittedLength,
     },
     payload: container.subarray(dataOffset),
   };

@@ -30,6 +30,7 @@ import {
   MAX_FILE_BYTES,
   MAX_FILE_LABEL,
   fnv1a,
+  isPrecompressedType,
   packFile,
   packFrame,
   type FrameHeader,
@@ -44,6 +45,7 @@ import {
   type SegmentPlan,
 } from "../shared/segmented-transfer";
 import { digestBlob, digestBytes } from "../shared/sha256";
+import { GZIP_MIN_GAIN_BYTES, gzipBytes, shouldTryGzip } from "../shared/compression";
 import { statusLine } from "../shared/status-line";
 import { requestScreenWakeLock } from "../shared/wake-lock";
 import { wireShareDialog } from "../shared/share-dialog";
@@ -416,7 +418,7 @@ async function startStream(revealStage = false) {
   type PreparedSegmentStream = {
     plan: SegmentPlan;
     payload: Uint8Array;
-    compression: "none";
+    compression: "none" | "gzip";
     transmittedSize: number;
     encoder: LTEncoder;
     header: FrameHeader;
@@ -450,8 +452,12 @@ async function startStream(revealStage = false) {
     segmentFramesBudget = Math.max(cycleLength(encoder.k) * 2, encoder.k + Math.ceil(encoder.k * 0.35));
     spec("spec-k").textContent = `K = ${encoder.k}`;
     if (segmentPlans.length > 1) {
+      const segmentCoding =
+        prepared.compression === "gzip"
+          ? `gzip → ${formatBytes(prepared.transmittedSize)}`
+          : formatBytes(prepared.plan.length);
       spec("spec-compression").textContent =
-        `segmented · ${formatBytes(prepared.plan.length)} (segment ${prepared.plan.index + 1}/${segmentPlans.length})`;
+        `segmented · ${segmentCoding} (segment ${prepared.plan.index + 1}/${segmentPlans.length})`;
       spec("spec-payload").textContent =
         `${name} · ${formatBytes(fileSize)} · ${formatBytes(prepared.plan.offset + prepared.plan.length)} sent window`;
     }
@@ -487,6 +493,14 @@ async function startStream(revealStage = false) {
       const part = segmentedFile.file.slice(plan.offset, plan.offset + plan.length);
       const raw = new Uint8Array(await part.arrayBuffer());
       const segmentSha256 = digestBytes(raw);
+      // Same trade as the single-stream path: gzip each segment when it shrinks
+      // the optical payload, and hash the plain bytes either way so the
+      // receiver's per-segment check is independent of how it travelled.
+      const compressed = shouldTryGzip(raw.length, isPrecompressedType(segmentedFile.mimeType))
+        ? await gzipBytes(raw)
+        : undefined;
+      const useGzip = compressed !== undefined && compressed.length + GZIP_MIN_GAIN_BYTES < raw.length;
+      const wire = useGzip ? compressed : raw;
       const packed = packSegmentContainer(
         {
           version: SEGMENT_PROTOCOL_VERSION,
@@ -500,8 +514,10 @@ async function startStream(revealStage = false) {
           segmentOffset: plan.offset,
           segmentLength: plan.length,
           segmentSha256,
+          compression: useGzip ? "gzip" : "none",
+          transmittedLength: wire.length,
         },
-        raw,
+        wire,
       );
       if (!fitsInOneStream(packed.length, frameBytes)) {
         throw new Error("Current frame size is too small for segmented metadata.");
@@ -511,8 +527,8 @@ async function startStream(revealStage = false) {
       return {
         plan,
         payload: packed,
-        compression: "none",
-        transmittedSize: plan.length,
+        compression: useGzip ? "gzip" : "none",
+        transmittedSize: wire.length,
         encoder: localEncoder,
         header: {
           sessionId,
