@@ -178,6 +178,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} من الإطارات · جارٍ فك الترميز`,
     aboutEta: (duration, frames) => `حوالي ${duration} · ${frames} من الإطارات`,
     etaTotal: (duration) => `${duration} إجمالًا`,
+    resyncing: "لم تجتز البيانات المستعادة التحقق. تجري إعادة المزامنة والمتابعة…",
+    resyncRestartSender: "إذا تكرر ذلك، فأعد تشغيل المرسِل.",
     transferFailedShort: "فشل النقل",
     transferFailedDetail:
       "لم يخرج من ذلك البث شيء صالح للاستخدام. أعد تشغيل المرسِل ثم امسحه من جديد — " +

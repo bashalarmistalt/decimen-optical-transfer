@@ -183,6 +183,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} フレーム · デコード中`,
     aboutEta: (duration, frames) => `約 ${duration} · ${frames} フレーム`,
     etaTotal: (duration) => `合計 ${duration}`,
+    resyncing: "復元データの検証に失敗しました。再同期して続行します…",
+    resyncRestartSender: "繰り返し発生する場合は、送信側を再起動してください。",
     transferFailedShort: "転送失敗",
     transferFailedDetail:
       "このストリームからは有効なデータを復元できませんでした。送信側を再起動して、もう一度スキャンしてください。" +

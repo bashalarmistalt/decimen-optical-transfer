@@ -186,6 +186,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `кадров: ${frames} · декодирование`,
     aboutEta: (duration, frames) => `Около ${duration} · кадров: ${frames}`,
     etaTotal: (duration) => `всего ${duration}`,
+    resyncing: "Восстановленные данные не прошли проверку. Повторная синхронизация…",
+    resyncRestartSender: "Если это повторяется, перезапустите отправителя.",
     transferFailedShort: "Передача не удалась",
     transferFailedDetail:
       "Из этого потока не удалось извлечь ничего пригодного. Перезапустите отправителя " +

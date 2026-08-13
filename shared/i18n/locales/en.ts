@@ -180,6 +180,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} frames · decoding`,
     aboutEta: (duration, frames) => `About ${duration} · ${frames} frames`,
     etaTotal: (duration) => `${duration} total`,
+    resyncing: "Recovered bytes did not verify. Re-syncing and continuing…",
+    resyncRestartSender: "If this keeps happening, restart the sender.",
     transferFailedShort: "Transfer failed",
     transferFailedDetail:
       "Nothing usable came out of that stream. Restart the sender, then scan it again — " +
