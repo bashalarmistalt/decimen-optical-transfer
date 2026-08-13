@@ -28,18 +28,25 @@ const ctx = self as unknown as {
 };
 
 /** Axis-aligned bounds of a symbol quad, shifted into capture coordinates by
- *  the crop offset — the receiver uses these to crop the next frames. */
-function boundsOf(p: DecimenQuad, ox: number, oy: number) {
+ *  the crop offset and the decode downscale — the receiver uses these to crop
+ *  the next frames. The decoder reports in buffer pixels; each buffer pixel is
+ *  `scale` capture pixels wide, so the mapping is ox + x*scale. */
+function boundsOf(p: DecimenQuad, ox: number, oy: number, scale: number) {
   const xs = [p.topLeft.x, p.topRight.x, p.bottomRight.x, p.bottomLeft.x];
   const ys = [p.topLeft.y, p.topRight.y, p.bottomRight.y, p.bottomLeft.y];
   const x = Math.min(...xs);
   const y = Math.min(...ys);
-  return { x: ox + x, y: oy + y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+  return {
+    x: ox + x * scale,
+    y: oy + y * scale,
+    w: (Math.max(...xs) - x) * scale,
+    h: (Math.max(...ys) - y) * scale,
+  };
 }
 
 /** The full quad in capture coordinates — the tracked path's anchor. */
-function shifted(p: DecimenQuad, ox: number, oy: number): DecimenQuad {
-  const s = (pt: { x: number; y: number }) => ({ x: pt.x + ox, y: pt.y + oy });
+function shifted(p: DecimenQuad, ox: number, oy: number, scale: number): DecimenQuad {
+  const s = (pt: { x: number; y: number }) => ({ x: ox + pt.x * scale, y: oy + pt.y * scale });
   return {
     topLeft: s(p.topLeft),
     topRight: s(p.topRight),
@@ -72,9 +79,9 @@ function pixelsOf(buf: ArrayBuffer | undefined, bitmap: ImageBitmap | undefined,
 }
 
 ctx.onmessage = async (e: MessageEvent) => {
-  const { id, buf, bitmap, w = 0, h = 0, ox = 0, oy = 0, full = true, quad, dim } = e.data as {
+  const { id, buf, bitmap, w = 0, h = 0, ox = 0, oy = 0, scale = 1, full = true, quad, dim, tryHarder = true } = e.data as {
     id: number;
-    /** Readback-fallback capture: raw RGBA. */
+    /** Readback-fallback capture: raw RGBA, already downscaled. */
     buf?: ArrayBuffer;
     /** Bitmap capture: GPU-cropped, pixels read on this thread. */
     bitmap?: ImageBitmap;
@@ -83,12 +90,17 @@ ctx.onmessage = async (e: MessageEvent) => {
     /** Crop origin within the capture, for mapping positions back. */
     ox?: number;
     oy?: number;
+    /** Decode downscale: each buffer pixel is this many capture pixels.
+     *  Positions come back in buffer pixels and are scaled up on the way out. */
+    scale?: number;
     /** Full-frame scan (up to a 3×3 grid) vs a single-code crop. */
     full?: boolean;
     /** The region's last decoded quad, capture coordinates — tracked path. */
     quad?: DecimenQuad;
     /** The stream's QR dimension in modules — tracked path. */
     dim?: number;
+    /** Whether a full scan may pay for the slower detector (crops always can). */
+    tryHarder?: boolean;
   };
   const zx = await ready;
   const pixels = pixelsOf(buf, bitmap, w, h);
@@ -106,18 +118,20 @@ ctx.onmessage = async (e: MessageEvent) => {
     let trackedAttempted = false;
     if (!full && quad && dim) {
       trackedAttempted = true;
+      // The quad arrives in capture coordinates; the buffer is downscaled.
+      const q = (pt: { x: number; y: number }) => ({ x: (pt.x - ox) / scale, y: (pt.y - oy) / scale });
       const r = zx.readTracked(
         ptr, pw, ph, dim,
-        quad.topLeft.x - ox, quad.topLeft.y - oy,
-        quad.topRight.x - ox, quad.topRight.y - oy,
-        quad.bottomRight.x - ox, quad.bottomRight.y - oy,
-        quad.bottomLeft.x - ox, quad.bottomLeft.y - oy,
+        q(quad.topLeft).x, q(quad.topLeft).y,
+        q(quad.topRight).x, q(quad.topRight).y,
+        q(quad.bottomRight).x, q(quad.bottomRight).y,
+        q(quad.bottomLeft).x, q(quad.bottomLeft).y,
       );
       if (r.valid && r.bytes.length > 0) {
         symbols.push({
           bytes: r.bytes,
-          box: boundsOf(r.position, ox, oy),
-          quad: shifted(r.position, ox, oy),
+          box: boundsOf(r.position, ox, oy, scale),
+          quad: shifted(r.position, ox, oy, scale),
           modules: r.modules,
           tracked: true,
         });
@@ -128,16 +142,19 @@ ctx.onmessage = async (e: MessageEvent) => {
     if (!trackedHit) {
       // Full scans get returnErrors (sightings live there — error results
       // COUNT against the symbol cap, hence the headroom above 9 codes) and a
-      // crop fallback stays in the cheapest configuration. tryHarder stays on
-      // everywhere: real marginal captures are where it earns its keep.
-      const vec = zx.readFull(ptr, pw, ph, true, full ? 12 : 2, full);
+      // crop fallback stays in the cheapest configuration. tryHarder is a
+      // policy decision made upstream (receive/main.ts): acquisition and
+      // degraded rescans need the extra passes; healthy background scans save
+      // the time. Crops default to true because their whole job is re-anchoring
+      // a tracked miss.
+      const vec = zx.readFull(ptr, pw, ph, tryHarder, full ? 12 : 2, full);
       for (let i = 0; i < vec.size(); i++) {
         const r = vec.get(i);
         if (r.valid && r.bytes.length > 0) {
           symbols.push({
             bytes: r.bytes,
-            box: boundsOf(r.position, ox, oy),
-            quad: shifted(r.position, ox, oy),
+            box: boundsOf(r.position, ox, oy, scale),
+            quad: shifted(r.position, ox, oy, scale),
             modules: r.modules,
             tracked: false,
           });
@@ -146,7 +163,7 @@ ctx.onmessage = async (e: MessageEvent) => {
           // the ECC budget) is still a fix on where a code sits — the
           // receiver aims a crop there, and crops decode where full frames
           // fail. Positions stay pixel-accurate through a ChecksumError.
-          const box = boundsOf(r.position, ox, oy);
+          const box = boundsOf(r.position, ox, oy, scale);
           if (box.w > 0 && box.h > 0) sightings.push(box);
         }
       }
