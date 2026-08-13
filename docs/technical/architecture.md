@@ -19,6 +19,7 @@ Three pages, one shared core, a handful of single-purpose build plugins. No fram
 - `display.ts` — QR display-size fitting against the viewport.
 - `platform.ts` — `isIOS`/`isAndroid` sniffs and camera capability probing (torch, continuous focus, max fps). Policy: probe wherever probeable; sniff only for unprobeable behavior.
 - `worker-pool.ts` — decode worker pool; busy workers drop frames, the fountain absorbs it.
+- `qr-pool.ts` — bounded sender encode-worker queue; results may finish out of order and are reordered by sequence before paint.
 - `no-signal.ts` — pure timing policy for the "Nothing happening?" hint (short first delay, longer after dismissal).
 - `progress.ts` — frames-collected progress estimation and fountain-overhead model.
 - `decode-policy.ts` — pure crop/full-scan downscale and `tryHarder` policy.
