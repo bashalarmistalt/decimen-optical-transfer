@@ -7,6 +7,11 @@ embind wrapper. Source is maintained at
 name their own build: the banner on the first line of `decimen_codec.js`,
 and the module's `version()`/`build()` exports at runtime.
 
+This beta vendors decimen-codec `0.3.0-beta.1`, build `fa67f8d`, which adds
+`readMatrix` for decoding the sampled auxiliary color plane. Its source is the
+`feature/read-module-matrix` branch and
+[decimen-codec PR #1](https://github.com/bashalarmistalt/decimen-codec/pull/1).
+
 decimen-codec is licensed under AGPL-3.0-or-later, the same license as the
 rest of this project — see the repository root [LICENSE](../../LICENSE). It
 incorporates [zxing-cpp](https://github.com/zxing-cpp/zxing-cpp) (copyright

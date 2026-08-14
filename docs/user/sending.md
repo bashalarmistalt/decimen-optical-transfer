@@ -21,5 +21,13 @@ Changing anything restarts the stream; the receiver resets automatically off the
 | bytes / frame | 2953 (QR v40) | the density ceiling — great phone-to-phone at close range; back off to 1465 (v27) for monitors or distance |
 | error correction | L | the fountain layer handles erasures; L is the right trade at these sizes |
 | display size | 900 px | capped by the screen; fullscreen ignores it |
+| color channel (beta) | off | opt-in two-frame QR; test the exact sending display and receiving camera before relying on it |
 
 Defaults favor the best-case demo. If a transfer crawls: bytes/frame → 1465, tx fps → 24, in that order.
+
+The color beta uses blue/black and yellow/white module pairs to carry a second
+fountain frame without changing the QR seen in luminance. A current receiver
+can recover both frames; an older v3 receiver ignores the feature flag and
+continues from the primary frames. Color performance depends on the display,
+camera, brightness, viewing angle, and room light, so leave it off unless that
+device pair has completed a verified test transfer.

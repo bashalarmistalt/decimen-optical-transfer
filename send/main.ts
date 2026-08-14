@@ -13,6 +13,7 @@
 //   handles erasures, and a frame is either decoded whole or discarded.
 
 import { fitQrDisplaySize } from "../shared/display";
+import { colorAuxSequence } from "../shared/color-sequence";
 import { gridDims } from "../shared/qr-raster";
 import {
   fillRuntimeTokens,
@@ -34,6 +35,7 @@ import {
 import { LTEncoder } from "../shared/fountain";
 import { MAX_SNIPPET_BYTES, packSnippet } from "../shared/snippet";
 import {
+  FLAG_COLOR_LAYERS,
   MAX_FILE_BYTES,
   MAX_FILE_LABEL,
   fnv1a,
@@ -97,6 +99,7 @@ const cfgBytes = document.getElementById("cfg-bytes") as HTMLSelectElement;
 const cfgEcc = document.getElementById("cfg-ecc") as HTMLSelectElement;
 const cfgGrid = document.getElementById("cfg-grid") as HTMLSelectElement;
 const cfgSize = document.getElementById("cfg-size") as HTMLInputElement;
+const cfgColor = document.getElementById("cfg-color") as HTMLInputElement;
 
 let selectedFile: {
   name: string;
@@ -322,7 +325,7 @@ async function main() {
   }
   applyMode();
   window.addEventListener("resize", () => resizeDisplay?.());
-  for (const el of [cfgFps, cfgBytes, cfgEcc, cfgGrid, cfgSize]) {
+  for (const el of [cfgFps, cfgBytes, cfgEcc, cfgGrid, cfgSize, cfgColor]) {
     el.addEventListener("change", () => void startStream());
   }
   await requestScreenWakeLock();
@@ -360,6 +363,7 @@ async function startStream(revealStage = false) {
   const gridCodes = Number(cfgGrid.value) || 1;
   const { cols: gridCols, rows: gridRows } = gridDims(gridCodes);
   const displayPx = Number(cfgSize.value);
+  const colorLayers = cfgColor.checked;
 
   const sessionId = (Math.floor(Math.random() * 0xffff) + 1) & 0xffff;
   const blockLen = blockLength(frameBytes);
@@ -389,10 +393,7 @@ async function startStream(revealStage = false) {
     blockLen,
     totalLen: payload.length,
     payloadFnv: fnv1a(payload),
-    // No feature bits: this build sends the plain v3 format (see FLAG_* in
-    // protocol.ts). Spelled out rather than defaulted so adding a flag is a
-    // decision made here, not an omission.
-    flags: 0,
+    flags: colorLayers ? FLAG_COLOR_LAYERS : 0,
   };
 
   let version: number | undefined; // locked after the first frame
@@ -405,8 +406,9 @@ async function startStream(revealStage = false) {
   // leaving blank cells until the stagger rotation reaches them again.
   const cells: (ImageData | null)[] = new Array<ImageData | null>(gridCodes).fill(null);
   const results = new Map<number, QrGenResult>();
-  let nextSeq = 0; // next completed result the paint queue may consume
-  let issuedSeq = 0; // next fountain frame handed to a worker
+  let nextResultId = 0; // next completed visual frame the paint queue may consume
+  let issuedResultId = 0; // next visual frame handed to a worker
+  let nextPrimarySeq = 0; // kept consecutive for receivers that ignore chroma
   let generatorFailed = false;
   const lookahead = LOOKAHEAD * gridCodes;
   stage.hidden = false;
@@ -486,8 +488,9 @@ async function startStream(revealStage = false) {
     // to the knobs that produced them; the status line stays for prose.
     spec("spec-fps").textContent = msg.send.fpsValue(String(txFps), gridCodes);
     spec("spec-frame").textContent = msg.send.frameBytesValue(String(frameBytes), gridCodes);
-    spec("spec-qr").textContent =
-      `V${version}${gridCodes > 1 ? ` ×${gridCodes}` : ""} · ECC ${ecc}`;
+    spec("spec-qr").textContent = `V${version}${
+      gridCodes > 1 ? ` ×${gridCodes}` : ""
+    } · ECC ${ecc}${colorLayers ? ` · ${msg.send.colorBetaTag}` : ""}`;
     spec("spec-payload").textContent = `${name} · ${formatBytesL(fileSize)}`;
     spec("spec-compression").textContent =
       compression === "gzip"
@@ -533,6 +536,7 @@ async function startStream(revealStage = false) {
             gridCodes,
             layout: `${gridCols}×${gridRows}`,
             displayPx,
+            colorLayers,
           },
           qr: { version, modules },
           fountain: { k: encoder.k, blockLen },
@@ -572,17 +576,26 @@ async function startStream(revealStage = false) {
     if (generatorFailed || gen !== generation) return;
     // Workers may finish out of order; only contiguous sequence ids enter the
     // paint queue, preserving the wire sequence and deterministic carousel.
-    for (let n = 0; n < max && queue.length < lookahead && results.has(nextSeq); n++) {
-      const frame = results.get(nextSeq)!;
-      results.delete(nextSeq);
+    for (let n = 0; n < max && queue.length < lookahead && results.has(nextResultId); n++) {
+      const frame = results.get(nextResultId)!;
+      results.delete(nextResultId);
       if (version === undefined) lockFirstFrame(frame);
       queue.push(new ImageData(new Uint8ClampedArray(frame.pixels.buffer), frame.size, frame.size));
-      nextSeq++;
+      nextResultId++;
     }
-    while (issuedSeq < nextSeq + lookahead) {
-      const bytes = packFrame({ ...header, seq: issuedSeq }, encoder.encode(issuedSeq));
-      qrPool.submit({ id: issuedSeq, version, ecc, bytes });
-      issuedSeq++;
+    while (issuedResultId < nextResultId + lookahead) {
+      const primarySeq = nextPrimarySeq++;
+      const bytes = packFrame({ ...header, seq: primarySeq }, encoder.encode(primarySeq));
+      let auxBytes: Uint8Array | undefined;
+      if (colorLayers) {
+        const auxiliarySeq = colorAuxSequence(primarySeq, encoder.k);
+        auxBytes = packFrame(
+          { ...header, seq: auxiliarySeq },
+          encoder.encode(auxiliarySeq),
+        );
+      }
+      qrPool.submit({ id: issuedResultId, version, ecc, bytes, auxBytes });
+      issuedResultId++;
     }
   };
   pump();

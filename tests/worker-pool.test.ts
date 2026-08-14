@@ -235,6 +235,35 @@ test("quad, modules, and tracked flag ride along to the decode callback", () => 
   assert.deepEqual(infos, [{ quad, modules: 177, tracked: true }]);
 });
 
+test("color metadata and per-reply counters reach their callbacks", () => {
+  const infos: unknown[] = [];
+  const totals: number[][] = [];
+  const created: FakeWorker[] = [];
+  const pool = new DecodeWorkerPool(
+    () => {
+      const worker = new FakeWorker(0);
+      created.push(worker);
+      return worker;
+    },
+    (_bytes, _box, info) => infos.push(info),
+    undefined,
+    undefined,
+    (attempts, decodes) => totals.push([attempts, decodes]),
+  );
+  pool.resize(1);
+  pool.submit(frame(1), []);
+  created[0]!.onmessage?.({
+    data: {
+      id: 0,
+      symbols: [{ bytes: new Uint8Array([1]), colorAux: true }],
+      colorAuxAttempts: 1,
+      colorAuxDecodes: 1,
+    },
+  } as MessageEvent);
+  assert.deepEqual(infos, [{ quad: undefined, modules: undefined, tracked: undefined, colorAux: true }]);
+  assert.deepEqual(totals, [[1, 1]]);
+});
+
 test("an empty pool accepts nothing", () => {
   const { pool } = harness();
   assert.equal(pool.submit(frame(1), []), false);

@@ -16,6 +16,8 @@ Three pages, one shared core, a handful of single-purpose build plugins. No fram
 - `protocol.ts` — frame header pack/parse, file container, SHA-256 verification, stream identity.
 - `frame-capacity.ts` — QR capacity math: payload size → block length / count limits.
 - `qr-raster.ts` — QR module matrix → RGBA raster.
+- `color-layer.ts` — beta two-plane QR palette plus perspective-aware chroma sampling.
+- `color-sequence.ts` — complementary auxiliary fountain sequence mapping that leaves the primary stream consecutive.
 - `display.ts` — QR display-size fitting against the viewport.
 - `platform.ts` — `isIOS`/`isAndroid` sniffs and camera capability probing (torch, continuous focus, max fps). Policy: probe wherever probeable; sniff only for unprobeable behavior.
 - `worker-pool.ts` — decode worker pool; busy workers drop frames, the fountain absorbs it.
@@ -47,7 +49,7 @@ One file each, exact-match string surgery that **throws when it misses** — mar
 ## Vendored decoder (`vendor/decimen-codec/`)
 
 The compiled decode engine — a QR-only zxing-cpp build with a tracked fast
-path, released separately as
+path and, in the color beta, module-matrix decoding, released separately as
 [decimen-codec](https://github.com/bashalarmistalt/decimen-codec). The
 artifacts self-identify (banner + `version()`/`build()` exports); licensing
 in `NOTICE.md` alongside them.

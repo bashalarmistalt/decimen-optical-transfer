@@ -110,6 +110,13 @@ export const CRITICAL_FLAGS = 0x0f;
 export const FLAG_ENCRYPTED = 0x01;
 
 /**
+ * A displayed QR carries an auxiliary fountain frame in chroma while its
+ * weighted luminance remains an ordinary primary QR. Safe to ignore: receivers
+ * without color support still decode the complete primary stream.
+ */
+export const FLAG_COLOR_LAYERS = 0x10;
+
+/**
  * Critical flag bits this build can actually honour — currently none.
  */
 const SUPPORTED_FLAGS = 0x00;

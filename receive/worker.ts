@@ -16,7 +16,13 @@
 //    re-anchors the quad. Tracked is opportunistic, never load-bearing.
 
 import wasmUrl from "./wasm-url";
-import DecimenCodec, { type DecimenModule, type DecimenQuad } from "../vendor/decimen-codec/decimen_codec.js";
+import { sampleLayeredQr } from "../shared/color-layer";
+import { FLAG_COLOR_LAYERS, parseFrame } from "../shared/protocol";
+import DecimenCodec, {
+  type DecimenModule,
+  type DecimenQuad,
+  type DecimenResult,
+} from "../vendor/decimen-codec/decimen_codec.js";
 
 const ready: Promise<DecimenModule> = DecimenCodec({
   locateFile: (path: string, prefix: string) => (path.endsWith(".wasm") ? wasmUrl : prefix + path),
@@ -59,6 +65,37 @@ function shifted(p: DecimenQuad, ox: number, oy: number, scale: number): Decimen
 // read back on THIS thread — the whole point of the bitmap path is that the
 // main thread never touches pixels.
 let offscreen: OffscreenCanvas | undefined;
+
+function decodeColorAux(
+  zx: DecimenModule,
+  pixels: Uint8Array | Uint8ClampedArray,
+  width: number,
+  height: number,
+  primary: DecimenResult,
+): Uint8Array | null {
+  try {
+    const sample = sampleLayeredQr(pixels, width, height, primary.position, primary.modules);
+    if (!sample) return null;
+    const matrixPtr = zx._malloc(sample.auxiliary.length);
+    try {
+      zx.HEAPU8.set(sample.auxiliary, matrixPtr);
+      const auxiliary = zx.readMatrix(matrixPtr, primary.modules);
+      return auxiliary.valid && auxiliary.bytes.length > 0
+        ? Uint8Array.from(auxiliary.bytes)
+        : null;
+    } finally {
+      zx._free(matrixPtr);
+    }
+  } catch {
+    // The auxiliary plane is opportunistic. A sampling or matrix-decode
+    // failure must never discard the already-valid primary frame.
+    return null;
+  }
+}
+
+function usesColorLayer(bytes: Uint8Array): boolean {
+  return Boolean((parseFrame(bytes)?.header.flags ?? 0) & FLAG_COLOR_LAYERS);
+}
 
 /** Pixels from either capture mode: a transferred ArrayBuffer (readback
  *  fallback) or an ImageBitmap (GPU-side crop, Safari 17+/modern engines). */
@@ -106,12 +143,21 @@ ctx.onmessage = async (e: MessageEvent) => {
   const pixels = pixelsOf(buf, bitmap, w, h);
   const { w: pw, h: ph } = pixels;
   const ptr = zx._malloc(pw * ph * 4);
+  let colorAuxAttempts = 0;
+  let colorAuxDecodes = 0;
   try {
     zx.HEAPU8.set(
       pixels.data instanceof Uint8Array ? pixels.data : new Uint8Array(pixels.data.buffer),
       ptr,
     );
-    const symbols: { bytes: Uint8Array; box: object; quad: DecimenQuad; modules: number; tracked: boolean }[] = [];
+    const symbols: {
+      bytes: Uint8Array;
+      box: object;
+      quad: DecimenQuad;
+      modules: number;
+      tracked: boolean;
+      colorAux?: boolean;
+    }[] = [];
     const sightings: object[] = [];
 
     let trackedHit = false;
@@ -135,6 +181,21 @@ ctx.onmessage = async (e: MessageEvent) => {
           modules: r.modules,
           tracked: true,
         });
+        if (usesColorLayer(r.bytes)) {
+          colorAuxAttempts++;
+          const auxiliary = decodeColorAux(zx, pixels.data, pw, ph, r);
+          if (auxiliary) {
+            colorAuxDecodes++;
+            symbols.push({
+              bytes: auxiliary,
+              box: boundsOf(r.position, ox, oy, scale),
+              quad: shifted(r.position, ox, oy, scale),
+              modules: r.modules,
+              tracked: false,
+              colorAux: true,
+            });
+          }
+        }
         trackedHit = true;
       }
     }
@@ -158,6 +219,21 @@ ctx.onmessage = async (e: MessageEvent) => {
             modules: r.modules,
             tracked: false,
           });
+          if (usesColorLayer(r.bytes)) {
+            colorAuxAttempts++;
+            const auxiliary = decodeColorAux(zx, pixels.data, pw, ph, r);
+            if (auxiliary) {
+              colorAuxDecodes++;
+              symbols.push({
+                bytes: auxiliary,
+                box: boundsOf(r.position, ox, oy, scale),
+                quad: shifted(r.position, ox, oy, scale),
+                modules: r.modules,
+                tracked: false,
+                colorAux: true,
+              });
+            }
+          }
         } else if (full) {
           // A symbol zxing DETECTED but could not decode (glare or noise past
           // the ECC budget) is still a fix on where a code sits — the
@@ -169,9 +245,16 @@ ctx.onmessage = async (e: MessageEvent) => {
       }
       vec.delete();
     }
-    ctx.postMessage({ id, symbols, sightings, trackedAttempted });
+    ctx.postMessage({
+      id,
+      symbols,
+      sightings,
+      trackedAttempted,
+      colorAuxAttempts,
+      colorAuxDecodes,
+    });
   } catch {
-    ctx.postMessage({ id, symbols: [], sightings: [] });
+    ctx.postMessage({ id, symbols: [], sightings: [], colorAuxAttempts, colorAuxDecodes });
   } finally {
     zx._free(ptr);
   }

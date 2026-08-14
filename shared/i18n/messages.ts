@@ -105,6 +105,9 @@ export interface Messages {
     layout4: string;
     layout6: string;
     settingDisplaySize: string;
+    colorBetaLabel: string;
+    colorBetaHint: string;
+    colorBetaTag: string;
     specTxRate: string;
     specFramePayload: string;
     specQr: string;

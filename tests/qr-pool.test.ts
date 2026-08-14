@@ -67,6 +67,14 @@ test("workers run concurrently and a freed slot takes queued work", () => {
   assert.deepEqual(workers[1]!.sent.map(({ id }) => id), [1, 2]);
 });
 
+test("both color-layer frame buffers transfer to the worker", () => {
+  const { pool, workers } = harness(1);
+  const primary = new Uint8Array([1]);
+  const auxiliary = new Uint8Array([2]);
+  pool.submit({ id: 0, ecc: "L", bytes: primary, auxBytes: auxiliary });
+  assert.deepEqual(workers[0]!.transfers[0], [primary.buffer, auxiliary.buffer]);
+});
+
 test("worker errors use the error callback and still free the slot", () => {
   const { pool, workers, errors } = harness(1);
   pool.submit(request(0));

@@ -146,6 +146,10 @@ const pool = new DecodeWorkerPool(
   // the crop path go decode what the full frame could not.
   (box) => noteRegion(box, performance.now(), false),
   () => trackedAttempts++,
+  (attempts, decodes) => {
+    colorAuxAttempts += attempts;
+    colorAuxDecodes += decodes;
+  },
 );
 const captureTimes: number[] = [];
 const decodeTimes: number[] = [];
@@ -162,11 +166,14 @@ let cropsSubmitted = 0;
 let trackedDecodes = 0; // decodes via the fork's detection-skipping fast path
 let trackedAttempts = 0; // crops that TRIED the fast path — hits/attempts is
 // the fork's real hit rate; zero attempts means the quad/dim plumbing broke
+let colorAuxAttempts = 0;
+let colorAuxDecodes = 0;
 let cameraStartedTs = 0; // acquisition latency = first decode − camera start
 let zeroRegionMs = 0; // transfer time spent with tracking fully collapsed
 let degradedMs = 0; // transfer time spent below the expected code count
 let minSeq = Infinity; // seq span ≈ what the sender emitted while we watched;
 let maxSeq = -1; //        framesNew / span is the fraction we actually caught
+let primaryFramesParsed = 0; // excludes high-range color auxiliary sequence ids
 // Run-level frame totals. A failed verification resyncs (replaces) the decoder
 // instance, whose per-instance counters would otherwise lose the frames
 // collected before the resync. These accumulate across instances and reset on a
@@ -1030,7 +1037,7 @@ function onDecoded(bytes: Uint8Array, box?: SymbolBox, info?: SymbolInfo) {
   decodeTimes.push(performance.now());
   totalDecodes++;
   if (info?.tracked) trackedDecodes++;
-  if (box) noteRegion(box, performance.now(), true, info);
+  if (box && !info?.colorAux) noteRegion(box, performance.now(), true, info);
   const parsed = parseFrame(bytes);
   if (done) return;
   if (!parsed) {
@@ -1071,16 +1078,20 @@ function onDecoded(bytes: Uint8Array, box?: SymbolBox, info?: SymbolInfo) {
     resyncReasons = { "payload-checksum": 0, "container-invalid": 0, "file-digest": 0 };
     minSeq = Infinity;
     maxSeq = -1;
+    primaryFramesParsed = 0;
     recentFrames.clear();
     progressEl.style.display = "block";
     progressStatus.style.display = "flex";
+  }
+  if (!info?.colorAux) {
+    primaryFramesParsed++;
+    minSeq = Math.min(minSeq, header.seq);
+    maxSeq = Math.max(maxSeq, header.seq);
   }
   if (recentFrames.isDuplicate(identity, header.seq)) {
     exactDuplicatesSkipped++;
     return;
   }
-  minSeq = Math.min(minSeq, header.seq);
-  maxSeq = Math.max(maxSeq, header.seq);
   decoder.addFrame(header.seq, block);
   updateProgressEstimate();
 
@@ -1229,7 +1240,10 @@ async function finish(file: OpticalFile, container: Uint8Array, seconds: number)
     // catch rate means the receiver missed displayed frames (capacity or
     // tracking); overhead high with a high catch rate blames the fountain.
     const seqSpan = maxSeq >= minSeq ? maxSeq - minSeq + 1 : 0;
-    const parsed = totalFramesNew() + totalFramesDup();
+    // Auxiliary IDs deliberately live in a high sequence range. Catch rate is
+    // therefore measured on the consecutive primary stream; mixing the ranges
+    // would turn the span into ~2 billion and make the metric meaningless.
+    const parsed = primaryFramesParsed;
     void fetch("/__diagnostics", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1274,6 +1288,8 @@ async function finish(file: OpticalFile, container: Uint8Array, seconds: number)
           decodes: totalDecodes,
           trackedAttempts,
           trackedDecodes,
+          colorAuxAttempts,
+          colorAuxDecodes,
           resyncs,
           resyncReasons,
           zeroRegionMs,

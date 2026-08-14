@@ -20,6 +20,8 @@ export interface QrGenRequest {
   version?: number;
   ecc: QrEcc;
   bytes: Uint8Array;
+  /** Optional second frame encoded in chroma at the primary QR's geometry. */
+  auxBytes?: Uint8Array;
 }
 
 export interface QrGenResult {
@@ -88,7 +90,9 @@ export class QrGenPool {
       if (slot === -1) return; // all workers busy — wait for the next onmessage
       const request = this.queue.shift()!;
       this.busy[slot] = true;
-      this.workers[slot]!.postMessage(request, [request.bytes.buffer as ArrayBuffer]);
+      const transfer = [request.bytes.buffer as ArrayBuffer];
+      if (request.auxBytes) transfer.push(request.auxBytes.buffer as ArrayBuffer);
+      this.workers[slot]!.postMessage(request, transfer);
     }
   }
 }

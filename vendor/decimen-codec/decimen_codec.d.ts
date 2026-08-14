@@ -32,7 +32,7 @@ export interface DecimenModule {
   _malloc(bytes: number): number;
   _free(ptr: number): void;
   HEAPU8: Uint8Array;
-  /** Codec version (decimen-codec package.json at build time), e.g. "0.1.0". */
+  /** Codec version (decimen-codec package.json at build time), e.g. "0.3.0-beta.1". */
   version(): string;
   /** Build id: git short hash, "-dirty" when built from an uncommitted tree. */
   build(): string;
@@ -58,6 +58,8 @@ export interface DecimenModule {
     x3: number,
     y3: number,
   ): DecimenResult;
+  /** Decode a row-major QR module matrix (one byte per module, 0/1). */
+  readMatrix(ptr: number, dim: number): DecimenResult;
   /** Debug: the raw sampled module grid for a quad — dim×dim row-major 0/1,
    *  or null when binarization or sampling fails. */
   trackedMatrix(

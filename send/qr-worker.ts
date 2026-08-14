@@ -7,6 +7,7 @@
 // which this worker never calls — importing it here is safe.
 
 import QRCode from "qrcode";
+import { rasterizeLayeredQr } from "../shared/color-layer";
 import { rasterizeQr } from "../shared/qr-raster";
 
 const MARGIN = 4; // quiet-zone modules — must match send/main.ts
@@ -19,6 +20,7 @@ interface EncodeRequest {
   version?: number;
   ecc: "L" | "M" | "Q" | "H";
   bytes: Uint8Array;
+  auxBytes?: Uint8Array;
 }
 
 const ctx = self as unknown as {
@@ -27,14 +29,23 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = (event: MessageEvent) => {
-  const { id, version, ecc, bytes } = event.data as EncodeRequest;
+  const { id, version, ecc, bytes, auxBytes } = event.data as EncodeRequest;
   try {
     const qr = QRCode.create([{ data: bytes, mode: "byte" } as unknown as QRCode.QRCodeSegment], {
       errorCorrectionLevel: ecc,
       version,
       maskPattern: 4, // pinned — see the tuning notes in send/main.ts
     });
-    const raster = rasterizeQr(qr.modules.size, qr.modules.data, MARGIN);
+    let raster;
+    if (auxBytes) {
+      const aux = QRCode.create(
+        [{ data: auxBytes, mode: "byte" } as unknown as QRCode.QRCodeSegment],
+        { errorCorrectionLevel: ecc, version: qr.version, maskPattern: 4 },
+      );
+      raster = rasterizeLayeredQr(qr.modules.size, qr.modules.data, aux.modules.data, MARGIN);
+    } else {
+      raster = rasterizeQr(qr.modules.size, qr.modules.data, MARGIN);
+    }
     ctx.postMessage(
       { id, version: qr.version, size: raster.size, pixels: raster.pixels },
       [raster.pixels.buffer],
