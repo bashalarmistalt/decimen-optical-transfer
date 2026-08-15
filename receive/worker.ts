@@ -71,7 +71,7 @@ function decodeColorAux(
   pixels: Uint8Array | Uint8ClampedArray,
   width: number,
   height: number,
-  primary: DecimenResult,
+  primary: Pick<DecimenResult, "position" | "modules">,
 ): Uint8Array | null {
   try {
     const sample = sampleLayeredQr(pixels, width, height, primary.position, primary.modules);
@@ -91,6 +91,20 @@ function decodeColorAux(
     // failure must never discard the already-valid primary frame.
     return null;
   }
+}
+
+function colorCandidate(primary: DecimenResult, ox: number, oy: number, scale: number) {
+  const position: DecimenQuad = {
+    topLeft: { ...primary.position.topLeft },
+    topRight: { ...primary.position.topRight },
+    bottomRight: { ...primary.position.bottomRight },
+    bottomLeft: { ...primary.position.bottomLeft },
+  };
+  return {
+    primary: { position, modules: primary.modules },
+    box: boundsOf(position, ox, oy, scale),
+    quad: shifted(position, ox, oy, scale),
+  };
 }
 
 function usesColorLayer(bytes: Uint8Array): boolean {
@@ -145,6 +159,7 @@ ctx.onmessage = async (e: MessageEvent) => {
   const ptr = zx._malloc(pw * ph * 4);
   let colorAuxAttempts = 0;
   let colorAuxDecodes = 0;
+  let primaryPosted = false;
   try {
     zx.HEAPU8.set(
       pixels.data instanceof Uint8Array ? pixels.data : new Uint8Array(pixels.data.buffer),
@@ -159,6 +174,7 @@ ctx.onmessage = async (e: MessageEvent) => {
       colorAux?: boolean;
     }[] = [];
     const sightings: object[] = [];
+    const colorCandidates: ReturnType<typeof colorCandidate>[] = [];
 
     let trackedHit = false;
     let trackedAttempted = false;
@@ -183,18 +199,7 @@ ctx.onmessage = async (e: MessageEvent) => {
         });
         if (usesColorLayer(r.bytes)) {
           colorAuxAttempts++;
-          const auxiliary = decodeColorAux(zx, pixels.data, pw, ph, r);
-          if (auxiliary) {
-            colorAuxDecodes++;
-            symbols.push({
-              bytes: auxiliary,
-              box: boundsOf(r.position, ox, oy, scale),
-              quad: shifted(r.position, ox, oy, scale),
-              modules: r.modules,
-              tracked: false,
-              colorAux: true,
-            });
-          }
+          colorCandidates.push(colorCandidate(r, ox, oy, scale));
         }
         trackedHit = true;
       }
@@ -221,18 +226,7 @@ ctx.onmessage = async (e: MessageEvent) => {
           });
           if (usesColorLayer(r.bytes)) {
             colorAuxAttempts++;
-            const auxiliary = decodeColorAux(zx, pixels.data, pw, ph, r);
-            if (auxiliary) {
-              colorAuxDecodes++;
-              symbols.push({
-                bytes: auxiliary,
-                box: boundsOf(r.position, ox, oy, scale),
-                quad: shifted(r.position, ox, oy, scale),
-                modules: r.modules,
-                tracked: false,
-                colorAux: true,
-              });
-            }
+            colorCandidates.push(colorCandidate(r, ox, oy, scale));
           }
         } else if (full) {
           // A symbol zxing DETECTED but could not decode (glare or noise past
@@ -245,16 +239,53 @@ ctx.onmessage = async (e: MessageEvent) => {
       }
       vec.delete();
     }
+
+    // Deliver the standards-compatible QR results before doing any optional
+    // chroma sampling. The pool keeps this worker busy until the final reply,
+    // so frames remain drop-on-overload rather than queueing behind color work.
     ctx.postMessage({
       id,
       symbols,
       sightings,
       trackedAttempted,
       colorAuxAttempts,
-      colorAuxDecodes,
+      colorAuxDecodes: 0,
+      done: colorCandidates.length === 0,
     });
+    primaryPosted = true;
+    if (colorCandidates.length) {
+      const auxiliarySymbols: typeof symbols = [];
+      for (const candidate of colorCandidates) {
+        const auxiliary = decodeColorAux(zx, pixels.data, pw, ph, candidate.primary);
+        if (!auxiliary) continue;
+        colorAuxDecodes++;
+        auxiliarySymbols.push({
+          bytes: auxiliary,
+          box: candidate.box,
+          quad: candidate.quad,
+          modules: candidate.primary.modules,
+          tracked: false,
+          colorAux: true,
+        });
+      }
+      ctx.postMessage({
+        id,
+        symbols: auxiliarySymbols,
+        sightings: [],
+        colorAuxAttempts: 0,
+        colorAuxDecodes,
+        done: true,
+      });
+    }
   } catch {
-    ctx.postMessage({ id, symbols: [], sightings: [], colorAuxAttempts, colorAuxDecodes });
+    ctx.postMessage({
+      id,
+      symbols: [],
+      sightings: [],
+      colorAuxAttempts: primaryPosted ? 0 : colorAuxAttempts,
+      colorAuxDecodes,
+      done: true,
+    });
   } finally {
     zx._free(ptr);
   }

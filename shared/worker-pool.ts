@@ -63,6 +63,8 @@ interface DecodeMessage {
   trackedAttempted?: boolean;
   colorAuxAttempts?: number;
   colorAuxDecodes?: number;
+  /** False when optional follow-up work will send a second reply for this id. */
+  done?: boolean;
 }
 
 export class DecodeWorkerPool {
@@ -103,9 +105,10 @@ export class DecodeWorkerPool {
           trackedAttempted,
           colorAuxAttempts = 0,
           colorAuxDecodes = 0,
+          done = true,
         } = event.data as DecodeMessage;
         if (id === -1) return; // warm-up ping, no frame attached
-        this.busy[slot] = false;
+        if (done) this.busy[slot] = false;
         if (trackedAttempted) this.onTrackedAttempt?.();
         if (colorAuxAttempts || colorAuxDecodes)
           this.onColorStats?.(colorAuxAttempts, colorAuxDecodes);

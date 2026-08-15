@@ -85,37 +85,83 @@ export function sampleLayeredQr(
     return null;
   const matrix = homographyMatrix(quad, dim);
   if (!matrix) return null;
-  const project = projectorOf(matrix);
   const ppm = averageEdge(quad) / dim;
   const halfWindow = ppm >= 4 ? 1 : 0;
-  const samples: { r: number; g: number; b: number; luma: number }[] = [];
+  const sampleCount = dim * dim;
+  const red = new Uint8ClampedArray(sampleCount);
+  const green = new Uint8ClampedArray(sampleCount);
+  const blue = new Uint8ClampedArray(sampleCount);
+  const luminanceHistogram = new Uint32Array(256);
+  const [a, b, c, d, e, f, g, h] = matrix;
+  let index = 0;
   for (let y = 0; y < dim; y++) {
     for (let x = 0; x < dim; x++) {
-      const point = project(x + 0.5, y + 0.5);
-      const rgb = readWindow(rgba, width, height, Math.floor(point.x), Math.floor(point.y), halfWindow);
-      if (!rgb) return null;
-      samples.push({ ...rgb, luma: 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b });
+      const mx = x + 0.5;
+      const my = y + 0.5;
+      const divisor = g! * mx + h! * my + 1;
+      const px = Math.floor((a! * mx + b! * my + c!) / divisor);
+      const py = Math.floor((d! * mx + e! * my + f!) / divisor);
+      let r = 0;
+      let gr = 0;
+      let bl = 0;
+      let pixels = 0;
+      for (let dy = -halfWindow; dy <= halfWindow; dy++) {
+        for (let dx = -halfWindow; dx <= halfWindow; dx++) {
+          const sx = px + dx;
+          const sy = py + dy;
+          if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
+          const offset = (sy * width + sx) * 4;
+          r += rgba[offset]!;
+          gr += rgba[offset + 1]!;
+          bl += rgba[offset + 2]!;
+          pixels++;
+        }
+      }
+      if (!pixels) return null;
+      r /= pixels;
+      gr /= pixels;
+      bl /= pixels;
+      red[index] = r;
+      green[index] = gr;
+      blue[index] = bl;
+      const luma = Math.round(0.2126 * r + 0.7152 * gr + 0.0722 * bl);
+      luminanceHistogram[luma] = luminanceHistogram[luma]! + 1;
+      index++;
     }
   }
 
-  const luminance = split(samples.map(({ luma }) => luma), 0, 255);
+  const luminance = splitHistogram(luminanceHistogram, sampleCount, 0);
   if (!luminance) return null;
-  const primary = Uint8Array.from(samples, ({ luma }) => (luma <= luminance.threshold ? 1 : 0));
-  const darkScores: number[] = [];
-  const lightScores: number[] = [];
-  samples.forEach(({ r, g, b }, i) => {
-    const score = primary[i] ? b - (r + g) / 2 : (r + g) / 2 - b;
-    (primary[i] ? darkScores : lightScores).push(score);
-  });
-  const dark = split(darkScores, -255, 255);
-  const light = split(lightScores, -255, 255);
+  const primary = new Uint8Array(sampleCount);
+  const darkHistogram = new Uint32Array(511);
+  const lightHistogram = new Uint32Array(511);
+  let darkCount = 0;
+  let lightCount = 0;
+  for (let i = 0; i < sampleCount; i++) {
+    const r = red[i]!;
+    const gr = green[i]!;
+    const bl = blue[i]!;
+    const isDark = 0.2126 * r + 0.7152 * gr + 0.0722 * bl <= luminance.threshold;
+    primary[i] = isDark ? 1 : 0;
+    const score = isDark ? bl - (r + gr) / 2 : (r + gr) / 2 - bl;
+    const bin = Math.max(0, Math.min(510, Math.round(score + 255)));
+    const histogram = isDark ? darkHistogram : lightHistogram;
+    histogram[bin] = histogram[bin]! + 1;
+    if (isDark) darkCount++;
+    else lightCount++;
+  }
+  const dark = splitHistogram(darkHistogram, darkCount, -255);
+  const light = splitHistogram(lightHistogram, lightCount, -255);
   if (!dark || !light) return null;
 
-  const auxiliary = new Uint8Array(samples.length);
-  samples.forEach(({ r, g, b }, i) => {
-    const score = primary[i] ? b - (r + g) / 2 : (r + g) / 2 - b;
+  const auxiliary = new Uint8Array(sampleCount);
+  for (let i = 0; i < sampleCount; i++) {
+    const r = red[i]!;
+    const gr = green[i]!;
+    const bl = blue[i]!;
+    const score = primary[i] ? bl - (r + gr) / 2 : (r + gr) / 2 - bl;
     auxiliary[i] = score > (primary[i] ? dark.threshold : light.threshold) ? 1 : 0;
-  });
+  }
   const confidence = Math.min(luminance.separation, dark.separation, light.separation) / 255;
   return confidence >= MIN_COLOR_CONFIDENCE ? { primary, auxiliary, confidence } : null;
 }
@@ -125,25 +171,19 @@ interface Split {
   separation: number;
 }
 
-/** Otsu split with a midpoint threshold and explicit cluster separation. */
-function split(values: number[], min: number, max: number): Split | null {
-  if (values.length < 8) return null;
-  const bins = Math.round(max - min) + 1;
-  const histogram = new Uint32Array(bins);
+/** Otsu split over an existing histogram, avoiding per-module object arrays. */
+function splitHistogram(histogram: Uint32Array, total: number, min: number): Split | null {
+  if (total < 8) return null;
   let sum = 0;
-  for (const value of values) {
-    const bin = Math.max(0, Math.min(bins - 1, Math.round(value - min)));
-    histogram[bin] = histogram[bin]! + 1;
-    sum += bin;
-  }
+  for (let bin = 0; bin < histogram.length; bin++) sum += bin * histogram[bin]!;
   let belowCount = 0;
   let belowSum = 0;
   let bestVariance = -1;
   let best: Split | null = null;
-  for (let bin = 0; bin < bins - 1; bin++) {
+  for (let bin = 0; bin < histogram.length - 1; bin++) {
     belowCount += histogram[bin]!;
     belowSum += bin * histogram[bin]!;
-    const aboveCount = values.length - belowCount;
+    const aboveCount = total - belowCount;
     if (belowCount === 0 || aboveCount === 0) continue;
     const belowMean = belowSum / belowCount;
     const aboveMean = (sum - belowSum) / aboveCount;
@@ -157,33 +197,6 @@ function split(values: number[], min: number, max: number): Split | null {
     }
   }
   return best;
-}
-
-function readWindow(
-  rgba: Uint8Array | Uint8ClampedArray,
-  width: number,
-  height: number,
-  cx: number,
-  cy: number,
-  half: number,
-): { r: number; g: number; b: number } | null {
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  let count = 0;
-  for (let dy = -half; dy <= half; dy++) {
-    for (let dx = -half; dx <= half; dx++) {
-      const x = cx + dx;
-      const y = cy + dy;
-      if (x < 0 || y < 0 || x >= width || y >= height) continue;
-      const offset = (y * width + x) * 4;
-      r += rgba[offset]!;
-      g += rgba[offset + 1]!;
-      b += rgba[offset + 2]!;
-      count++;
-    }
-  }
-  return count ? { r: r / count, g: g / count, b: b / count } : null;
 }
 
 export function homographyMatrix(quad: Quad, dim: number): number[] | null {
@@ -200,14 +213,6 @@ export function homographyMatrix(quad: Quad, dim: number): number[] | null {
   }
   const solved = gaussJordan(equations);
   return solved ? [...solved, 1] : null;
-}
-
-function projectorOf(matrix: number[]): (x: number, y: number) => Point {
-  const [a, b, c, d, e, f, g, h] = matrix;
-  return (x, y) => {
-    const w = g! * x + h! * y + 1;
-    return { x: (a! * x + b! * y + c!) / w, y: (d! * x + e! * y + f!) / w };
-  };
 }
 
 function gaussJordan(matrix: number[][]): number[] | null {

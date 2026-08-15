@@ -49,6 +49,12 @@ import { requestScreenWakeLock } from "../shared/wake-lock";
 import { wireShareDialog } from "../shared/share-dialog";
 import { QrGenPool, type QrGenError, type QrGenResult } from "../shared/qr-pool";
 import { createQrWorker } from "./qr-worker-factory";
+import {
+  BENCHMARK_GRID_CODES,
+  BENCHMARK_TX_FPS,
+  recommendedSenderProfile,
+  refreshRateFromTimestamps,
+} from "../shared/send-settings";
 
 await initI18n();
 
@@ -111,6 +117,7 @@ let selectedFile: {
 let generation = 0; // bumped on every restart; stale loops see it and die
 let resizeDisplay: (() => void) | null = null;
 let streamQrPool: QrGenPool | null = null;
+let displayRefreshHz: number | undefined;
 
 const specsLine = statusLine(specs);
 const setStatus = specsLine.setStatus;
@@ -287,6 +294,18 @@ async function selectSnippet(): Promise<void> {
   });
 }
 
+function measureDisplayRefreshRate(sampleCount = 16): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    const timestamps: number[] = [];
+    const sample = (time: number) => {
+      timestamps.push(time);
+      if (timestamps.length >= sampleCount) resolve(refreshRateFromTimestamps(timestamps));
+      else requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+}
+
 async function main() {
   // Both bounds come from MAX_SNIPPET_BYTES so they can't drift apart. maxLength
   // counts UTF-16 units and the real check counts UTF-8 bytes, which are never
@@ -294,15 +313,27 @@ async function main() {
   snippetText.maxLength = MAX_SNIPPET_BYTES;
   snippetLabel.textContent = fillRuntimeTokens(msg.send.snippetLabelWithMax);
 
+  if (BENCHMARK) {
+    cfgFps.value = String(BENCHMARK_TX_FPS);
+    cfgGrid.value = String(BENCHMARK_GRID_CODES);
+  } else {
+    displayRefreshHz = await measureDisplayRefreshRate();
+    const recommended = recommendedSenderProfile({
+      refreshHz: displayRefreshHz,
+      shortSideCssPx: Math.min(window.innerWidth, window.innerHeight),
+    });
+    cfgFps.value = String(recommended.txFps);
+    cfgGrid.value = String(recommended.gridCodes);
+  }
+
   document.querySelector('.mode-nav a[href="../send/"]')?.setAttribute("aria-current", "page");
   if (DEMO || BENCHMARK) {
     const current = document.querySelector('.mode-nav a[href="../send/"]');
     if (current) current.textContent = BENCHMARK ? msg.send.navBenchmark : msg.send.navDemo;
     const paneLabel = paneDemo.querySelector("span");
     if (BENCHMARK && paneLabel) paneLabel.textContent = msg.send.benchmarkPayload;
-    // Benchmark preset: 4 codes (2×2). The announcement records the actual
-    // settings either way; this just makes the canonical rig the default.
-    if (BENCHMARK) cfgGrid.value = "4";
+    // Benchmark settings were pinned above before any stream can start. The
+    // announcement records the actual settings too.
     for (const button of document.querySelectorAll<HTMLButtonElement>("[data-demo]")) {
       // Benchmark mode shows only the canonical payload; demo mode hides it.
       button.hidden = BENCHMARK ? !button.hasAttribute("data-benchmark") : button.hasAttribute("data-benchmark");
@@ -537,6 +568,9 @@ async function startStream(revealStage = false) {
             layout: `${gridCols}×${gridRows}`,
             displayPx,
             colorLayers,
+            displayRefreshHz: displayRefreshHz
+              ? Number(displayRefreshHz.toFixed(1))
+              : null,
           },
           qr: { version, modules },
           fountain: { k: encoder.k, blockLen },
