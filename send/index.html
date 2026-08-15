@@ -80,12 +80,16 @@
           <label>
             <span data-i18n="send.settingLayout">layout</span>
             <select id="cfg-grid">
-              <option value="1" selected data-i18n="send.layout1">1 code</option><option value="2" data-i18n="send.layout2">2 codes (1×2)</option><option value="4" data-i18n="send.layout4">4 codes (2×2)</option><option value="6" data-i18n="send.layout6">6 codes (2×3)</option>
+              <option value="1" data-i18n="send.layout1">1 code</option><option value="2" selected data-i18n="send.layout2">2 codes (1×2)</option><option value="4" data-i18n="send.layout4">4 codes (2×2)</option><option value="6" data-i18n="send.layout6">6 codes (2×3)</option>
             </select>
           </label>
           <label>
             <span data-i18n="send.settingDisplaySize">display size</span>
             <input id="cfg-size" type="range" min="300" max="1200" step="50" value="900" />
+          </label>
+          <label class="check color-beta-setting">
+            <input id="cfg-color" type="checkbox" />
+            <span><span data-i18n="send.colorBetaLabel">color channel (beta)</span><small data-i18n="send.colorBetaHint">Doubles frames per QR; test both screens first.</small></span>
           </label>
         </div>
         <!-- What the knobs above actually produced; filled by main.ts when a

@@ -6,6 +6,10 @@ Fill the camera view with the code and prop the phone against something — auto
 
 Progress counts **frames collected**, not blocks solved — fountain decoding back-loads its solve cascade, so the bar is estimated from frame rate and only verified completion reaches 100%.
 
+If an assembled transfer fails verification, the receiver re-syncs and keeps
+receiving while the sender continues streaming. After repeated failures the
+status line recommends restarting the sender.
+
 ## When it lands
 
 - The file is verified against its SHA-256 before anything is offered.
@@ -24,6 +28,6 @@ Camera settings apply live while the camera runs; a device that refuses a live r
 |---|---|---|
 | camera | auto | the device list fills in once the camera starts (browsers hide camera names until permission is granted); pick a specific one when auto grabs the wrong lens — front, or a telephoto — and the stream switches over live |
 | capture width | 1280 | 1920 costs decode time; 960 helps weak CPUs |
-| capture fps | 60 | iOS delivers 30 unless the exact rate is demanded — the app handles this |
+| capture fps | 60 | 30, 60, 90, and 120 are offered; unsupported rates are disabled after the camera reports its capabilities |
 | decode workers | device max | one WASM decoder per worker; busy workers drop frames, which the fountain absorbs |
 | show received files automatically | on | the only setting that persists between sessions, and the only one read when a transfer *lands* rather than when the camera starts |

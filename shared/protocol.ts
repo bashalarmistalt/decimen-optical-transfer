@@ -110,6 +110,13 @@ export const CRITICAL_FLAGS = 0x0f;
 export const FLAG_ENCRYPTED = 0x01;
 
 /**
+ * A displayed QR carries an auxiliary fountain frame in chroma while its
+ * weighted luminance remains an ordinary primary QR. Safe to ignore: receivers
+ * without color support still decode the complete primary stream.
+ */
+export const FLAG_COLOR_LAYERS = 0x10;
+
+/**
  * Critical flag bits this build can actually honour — currently none.
  */
 const SUPPORTED_FLAGS = 0x00;
@@ -147,8 +154,14 @@ export interface OpticalFile {
 }
 
 async function digest(bytes: Uint8Array): Promise<Uint8Array> {
-  const stableBytes = Uint8Array.from(bytes);
-  return new Uint8Array(await crypto.subtle.digest("SHA-256", stableBytes));
+  // Browser-created Uint8Arrays already own an ArrayBuffer. Pass the view
+  // directly so verifying a 64 MB transfer does not first allocate and copy a
+  // second 64 MB buffer. SharedArrayBuffer-backed views keep the safe copy.
+  const input =
+    bytes.buffer instanceof ArrayBuffer
+      ? (bytes as Uint8Array<ArrayBuffer>)
+      : Uint8Array.from(bytes);
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", input));
 }
 
 async function gzipAsync(bytes: Uint8Array): Promise<Uint8Array> {

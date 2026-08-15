@@ -84,6 +84,9 @@ export const messages: Messages = {
     layout4: "4 رموز (2×2)",
     layout6: "6 رموز (2×3)",
     settingDisplaySize: "حجم العرض",
+    colorBetaLabel: "قناة الألوان (تجريبية)",
+    colorBetaHint: "تضاعف الإطارات لكل رمز؛ اختبر الشاشتين أولًا.",
+    colorBetaTag: "لون تجريبي",
     specTxRate: "معدل الإرسال",
     specFramePayload: "حمولة الإطار",
     specQr: "QR",
@@ -178,6 +181,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} من الإطارات · جارٍ فك الترميز`,
     aboutEta: (duration, frames) => `حوالي ${duration} · ${frames} من الإطارات`,
     etaTotal: (duration) => `${duration} إجمالًا`,
+    resyncing: "لم تجتز البيانات المستعادة التحقق. تجري إعادة المزامنة والمتابعة…",
+    resyncRestartSender: "إذا تكرر ذلك، فأعد تشغيل المرسِل.",
     transferFailedShort: "فشل النقل",
     transferFailedDetail:
       "لم يخرج من ذلك البث شيء صالح للاستخدام. أعد تشغيل المرسِل ثم امسحه من جديد — " +

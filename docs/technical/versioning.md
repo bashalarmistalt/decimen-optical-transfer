@@ -78,7 +78,9 @@ A `u8` at byte 3, split into two halves that behave differently:
   bit rather than wire v4.
 - **`0xF0` — safe to ignore.** An unknown bit here is parsed straight through.
   Use for anything that *describes* a stream an older receiver still decodes
-  correctly.
+  correctly. `FLAG_COLOR_LAYERS` (`0x10`) marks an auxiliary QR carried in
+  chroma; its luminance plane is still a complete ordinary stream, so an older
+  receiver safely reads the primary frames at half the enhanced throughput.
 
 **The split ships with the first versioned build because it cannot be added
 later.** A receiver already told "every unknown bit is fatal" can only be

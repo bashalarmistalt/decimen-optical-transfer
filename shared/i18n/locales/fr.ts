@@ -90,6 +90,9 @@ export const messages: Messages = {
     layout4: "4 codes (2×2)",
     layout6: "6 codes (2×3)",
     settingDisplaySize: "taille d’affichage",
+    colorBetaLabel: "canal couleur (bêta)",
+    colorBetaHint: "Double les trames par code ; testez d’abord les deux écrans.",
+    colorBetaTag: "couleur bêta",
     specTxRate: "débit d’émission",
     specFramePayload: "charge par trame",
     specQr: "qr",
@@ -194,6 +197,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} trames · décodage`,
     aboutEta: (duration, frames) => `Environ ${duration} · ${frames} trames`,
     etaTotal: (duration) => `${duration} au total`,
+    resyncing: "Les données récupérées n’ont pas été validées. Resynchronisation en cours…",
+    resyncRestartSender: "Si cela continue, redémarrez l’expéditeur.",
     transferFailedShort: "Échec du transfert",
     transferFailedDetail:
       "Rien d’utilisable n’est sorti de ce flux. Redémarrez l’expéditeur, puis scannez à " +

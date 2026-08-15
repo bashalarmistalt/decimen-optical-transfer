@@ -235,6 +235,78 @@ test("quad, modules, and tracked flag ride along to the decode callback", () => 
   assert.deepEqual(infos, [{ quad, modules: 177, tracked: true }]);
 });
 
+test("color metadata and per-reply counters reach their callbacks", () => {
+  const infos: unknown[] = [];
+  const totals: number[][] = [];
+  const created: FakeWorker[] = [];
+  const pool = new DecodeWorkerPool(
+    () => {
+      const worker = new FakeWorker(0);
+      created.push(worker);
+      return worker;
+    },
+    (_bytes, _box, info) => infos.push(info),
+    undefined,
+    undefined,
+    (attempts, decodes) => totals.push([attempts, decodes]),
+  );
+  pool.resize(1);
+  pool.submit(frame(1), []);
+  created[0]!.onmessage?.({
+    data: {
+      id: 0,
+      symbols: [{ bytes: new Uint8Array([1]), colorAux: true }],
+      colorAuxAttempts: 1,
+      colorAuxDecodes: 1,
+    },
+  } as MessageEvent);
+  assert.deepEqual(infos, [{ quad: undefined, modules: undefined, tracked: undefined, colorAux: true }]);
+  assert.deepEqual(totals, [[1, 1]]);
+});
+
+test("optional color follow-up does not delay primary delivery or free the slot early", () => {
+  const decoded: number[] = [];
+  const totals: number[][] = [];
+  const created: FakeWorker[] = [];
+  const pool = new DecodeWorkerPool(
+    () => {
+      const worker = new FakeWorker(0);
+      created.push(worker);
+      return worker;
+    },
+    (bytes) => decoded.push(bytes[0]!),
+    undefined,
+    undefined,
+    (attempts, decodes) => totals.push([attempts, decodes]),
+  );
+  pool.resize(1);
+  pool.submit(frame(1), []);
+
+  created[0]!.onmessage?.({
+    data: {
+      id: 0,
+      symbols: [{ bytes: new Uint8Array([1]) }],
+      colorAuxAttempts: 1,
+      done: false,
+    },
+  } as MessageEvent);
+  assert.deepEqual(decoded, [1], "primary bytes are delivered on the first reply");
+  assert.equal(pool.busyCount, 1, "worker remains busy while sampling color");
+  assert.equal(pool.submit(frame(2), []), false, "a stale frame is dropped instead of queued");
+
+  created[0]!.onmessage?.({
+    data: {
+      id: 0,
+      symbols: [{ bytes: new Uint8Array([2]), colorAux: true }],
+      colorAuxDecodes: 1,
+      done: true,
+    },
+  } as MessageEvent);
+  assert.deepEqual(decoded, [1, 2]);
+  assert.deepEqual(totals, [[1, 0], [0, 1]]);
+  assert.equal(pool.busyCount, 0);
+});
+
 test("an empty pool accepts nothing", () => {
   const { pool } = harness();
   assert.equal(pool.submit(frame(1), []), false);

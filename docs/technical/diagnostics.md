@@ -58,9 +58,11 @@ sent from `finish()` while camera settings and pool size are still real):
   frames (capacity or tracking). High overhead *with* a high catch rate →
   blame the fountain, not the pipeline.
 - **Pipeline**: captures, drops from a busy pool, crops vs full scans,
-  decodes, `trackedAttempts`/`trackedDecodes` (hits/attempts is the
+  downscaled crop/full-scan counts, decodes,
+  `trackedAttempts`/`trackedDecodes` (hits/attempts is the
   decimen-codec fast path's real hit rate — zero attempts means the
-  quad/dim plumbing broke, not the decoder), `zeroRegionMs`/`degradedMs`
+  quad/dim plumbing broke, not the decoder), `resyncs` and machine-readable
+  `resyncReasons`, `zeroRegionMs`/`degradedMs`
   (time spent with tracking collapsed / below the expected code count).
 - **Environment**: worker count, requested vs actual camera settings,
   probed camera capabilities, device cores and UA.
@@ -79,6 +81,10 @@ sent from `finish()` while camera settings and pool size are still real):
    `framesRedundant` and `usefulOverhead`.
 4. `trackedDecodes/trackedAttempts` low? The fast path is missing — camera
    drift or quad quality; the crop pipeline is falling back to full decodes.
+5. `resyncs > 0`? A completed assembly failed FNV, container parsing, or
+   SHA-256 verification. The receiver replaced the spent fountain decoder and
+   kept capturing the same stream; inspect `resyncReasons` before blaming the
+   fountain.
 
 ## Benchmark records
 

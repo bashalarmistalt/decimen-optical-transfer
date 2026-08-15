@@ -105,6 +105,9 @@ export interface Messages {
     layout4: string;
     layout6: string;
     settingDisplaySize: string;
+    colorBetaLabel: string;
+    colorBetaHint: string;
+    colorBetaTag: string;
     specTxRate: string;
     specFramePayload: string;
     specQr: string;
@@ -202,6 +205,9 @@ export interface Messages {
     framesDecoding: (frames: string) => string;
     aboutEta: (duration: string, frames: string) => string;
     etaTotal: (duration: string) => string; // "12s total"
+    /** A completed fountain assembly failed verification; capture continues. */
+    resyncing: string;
+    resyncRestartSender: string;
     transferFailedShort: string; // eta line + failure heading
     transferFailedDetail: string;
     tryAgain: string;

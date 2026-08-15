@@ -87,6 +87,9 @@ export const messages: Messages = {
     layout4: "4 Codes (2×2)",
     layout6: "6 Codes (2×3)",
     settingDisplaySize: "Anzeigegröße",
+    colorBetaLabel: "Farbkanal (Beta)",
+    colorBetaHint: "Verdoppelt Frames pro Code; beide Bildschirme zuerst testen.",
+    colorBetaTag: "Farb-Beta",
     specTxRate: "tx-Rate",
     specFramePayload: "Frame-Payload",
     specQr: "qr",
@@ -186,6 +189,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} Frames · wird decodiert`,
     aboutEta: (duration, frames) => `Noch etwa ${duration} · ${frames} Frames`,
     etaTotal: (duration) => `${duration} gesamt`,
+    resyncing: "Die wiederhergestellten Daten konnten nicht bestätigt werden. Synchronisierung läuft erneut…",
+    resyncRestartSender: "Wenn das weiter passiert, starten Sie den Sender neu.",
     transferFailedShort: "Übertragung fehlgeschlagen",
     transferFailedDetail:
       "Aus diesem Stream kam nichts Brauchbares. Starten Sie den Sender neu und scannen Sie " +

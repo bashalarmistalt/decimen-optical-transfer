@@ -85,6 +85,9 @@ export const messages: Messages = {
     layout4: "4 códigos (2×2)",
     layout6: "6 códigos (2×3)",
     settingDisplaySize: "tamanho de exibição",
+    colorBetaLabel: "canal de cor (beta)",
+    colorBetaHint: "Duplica os quadros por código; teste as duas telas primeiro.",
+    colorBetaTag: "cor beta",
     specTxRate: "taxa de tx",
     specFramePayload: "payload do quadro",
     specQr: "qr",
@@ -179,6 +182,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} quadros · decodificando`,
     aboutEta: (duration, frames) => `Cerca de ${duration} · ${frames} quadros`,
     etaTotal: (duration) => `${duration} no total`,
+    resyncing: "Os dados recuperados não passaram na verificação. Ressincronizando e continuando…",
+    resyncRestartSender: "Se isso continuar, reinicie o remetente.",
     transferFailedShort: "Falha na transferência",
     transferFailedDetail:
       "Nada aproveitável saiu desse fluxo. Reinicie o remetente e escaneie de novo — " +

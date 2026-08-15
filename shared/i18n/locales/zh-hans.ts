@@ -84,6 +84,9 @@ export const messages: Messages = {
     layout4: "4 个码 (2×2)",
     layout6: "6 个码 (2×3)",
     settingDisplaySize: "显示尺寸",
+    colorBetaLabel: "彩色通道（测试版）",
+    colorBetaHint: "每个码可承载双倍帧；请先测试两块屏幕。",
+    colorBetaTag: "彩色测试",
     specTxRate: "发送速率",
     specFramePayload: "帧载荷",
     specQr: "QR",
@@ -174,6 +177,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} 帧 · 解码中`,
     aboutEta: (duration, frames) => `约 ${duration} · ${frames} 帧`,
     etaTotal: (duration) => `共 ${duration}`,
+    resyncing: "恢复的数据未通过验证。正在重新同步并继续接收…",
+    resyncRestartSender: "如果持续发生，请重启发送方。",
     transferFailedShort: "传输失败",
     transferFailedDetail:
       "这条数据流没有恢复出任何可用内容。请重启发送方，再扫一次——" +

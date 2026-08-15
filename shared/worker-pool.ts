@@ -39,19 +39,32 @@ export interface SymbolInfo {
   modules?: number;
   /** True when the tracked fast path produced this decode. */
   tracked?: boolean;
+  /** True for a frame recovered from the experimental chroma plane. */
+  colorAux?: boolean;
 }
 
 interface DecodeMessage {
   id: number;
   /** Every QR found in the frame. The grid sender shows several codes at
    *  once; each one is an independent fountain frame. Empty means a miss. */
-  symbols: { bytes: Uint8Array; box?: SymbolBox; quad?: SymbolQuad; modules?: number; tracked?: boolean }[];
+  symbols: {
+    bytes: Uint8Array;
+    box?: SymbolBox;
+    quad?: SymbolQuad;
+    modules?: number;
+    tracked?: boolean;
+    colorAux?: boolean;
+  }[];
   /** Codes DETECTED but not decoded — no bytes, but the position is real.
    *  The receiver uses these to aim crops at codes the full frame lost. */
   sightings?: SymbolBox[];
   /** True when this reply's crop went through the tracked fast path first —
    *  paired with per-symbol `tracked`, the receiver derives the hit rate. */
   trackedAttempted?: boolean;
+  colorAuxAttempts?: number;
+  colorAuxDecodes?: number;
+  /** False when optional follow-up work will send a second reply for this id. */
+  done?: boolean;
 }
 
 export class DecodeWorkerPool {
@@ -63,6 +76,7 @@ export class DecodeWorkerPool {
     private readonly onDecoded: (bytes: Uint8Array, box?: SymbolBox, info?: SymbolInfo) => void,
     private readonly onSighted?: (box: SymbolBox) => void,
     private readonly onTrackedAttempt?: () => void,
+    private readonly onColorStats?: (attempts: number, decodes: number) => void,
   ) {}
 
   get size(): number {
@@ -84,12 +98,27 @@ export class DecodeWorkerPool {
       const slot = this.workers.length;
       const worker = this.create();
       worker.onmessage = (event: MessageEvent) => {
-        const { id, symbols, sightings, trackedAttempted } = event.data as DecodeMessage;
+        const {
+          id,
+          symbols,
+          sightings,
+          trackedAttempted,
+          colorAuxAttempts = 0,
+          colorAuxDecodes = 0,
+          done = true,
+        } = event.data as DecodeMessage;
         if (id === -1) return; // warm-up ping, no frame attached
-        this.busy[slot] = false;
+        if (done) this.busy[slot] = false;
         if (trackedAttempted) this.onTrackedAttempt?.();
+        if (colorAuxAttempts || colorAuxDecodes)
+          this.onColorStats?.(colorAuxAttempts, colorAuxDecodes);
         for (const s of symbols)
-          this.onDecoded(s.bytes, s.box, { quad: s.quad, modules: s.modules, tracked: s.tracked });
+          this.onDecoded(s.bytes, s.box, {
+            quad: s.quad,
+            modules: s.modules,
+            tracked: s.tracked,
+            ...(s.colorAux ? { colorAux: true } : {}),
+          });
         if (this.onSighted) for (const box of sightings ?? []) this.onSighted(box);
       };
       this.workers.push(worker);

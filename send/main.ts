@@ -12,9 +12,9 @@
 // - Error correction stays at L by default: the fountain layer already
 //   handles erasures, and a frame is either decoded whole or discarded.
 
-import QRCode from "qrcode";
 import { fitQrDisplaySize } from "../shared/display";
-import { gridDims, rasterizeQr } from "../shared/qr-raster";
+import { colorAuxSequence } from "../shared/color-sequence";
+import { gridDims } from "../shared/qr-raster";
 import {
   fillRuntimeTokens,
   fmtInt,
@@ -35,6 +35,7 @@ import {
 import { LTEncoder } from "../shared/fountain";
 import { MAX_SNIPPET_BYTES, packSnippet } from "../shared/snippet";
 import {
+  FLAG_COLOR_LAYERS,
   MAX_FILE_BYTES,
   MAX_FILE_LABEL,
   fnv1a,
@@ -46,11 +47,22 @@ import {
 import { statusLine } from "../shared/status-line";
 import { requestScreenWakeLock } from "../shared/wake-lock";
 import { wireShareDialog } from "../shared/share-dialog";
+import { QrGenPool, type QrGenError, type QrGenResult } from "../shared/qr-pool";
+import { createQrWorker } from "./qr-worker-factory";
+import {
+  BENCHMARK_GRID_CODES,
+  BENCHMARK_TX_FPS,
+  recommendedSenderProfile,
+  refreshRateFromTimestamps,
+} from "../shared/send-settings";
 
 await initI18n();
 
 const MARGIN = 4; // quiet-zone modules
 const LOOKAHEAD = 3;
+// Two workers cover a 4-code grid at 60 fps with headroom while leaving the
+// phone's remaining cores free for layout, paint, and browser work.
+const QR_WORKERS = 2;
 
 // `npm run demo` (vite --mode demo). Locks the sender to the two bundled
 // payloads so the app can be left running in front of strangers without
@@ -93,6 +105,7 @@ const cfgBytes = document.getElementById("cfg-bytes") as HTMLSelectElement;
 const cfgEcc = document.getElementById("cfg-ecc") as HTMLSelectElement;
 const cfgGrid = document.getElementById("cfg-grid") as HTMLSelectElement;
 const cfgSize = document.getElementById("cfg-size") as HTMLInputElement;
+const cfgColor = document.getElementById("cfg-color") as HTMLInputElement;
 
 let selectedFile: {
   name: string;
@@ -103,6 +116,8 @@ let selectedFile: {
 } | null = null;
 let generation = 0; // bumped on every restart; stale loops see it and die
 let resizeDisplay: (() => void) | null = null;
+let streamQrPool: QrGenPool | null = null;
+let displayRefreshHz: number | undefined;
 
 const specsLine = statusLine(specs);
 const setStatus = specsLine.setStatus;
@@ -279,6 +294,18 @@ async function selectSnippet(): Promise<void> {
   });
 }
 
+function measureDisplayRefreshRate(sampleCount = 16): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    const timestamps: number[] = [];
+    const sample = (time: number) => {
+      timestamps.push(time);
+      if (timestamps.length >= sampleCount) resolve(refreshRateFromTimestamps(timestamps));
+      else requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+}
+
 async function main() {
   // Both bounds come from MAX_SNIPPET_BYTES so they can't drift apart. maxLength
   // counts UTF-16 units and the real check counts UTF-8 bytes, which are never
@@ -286,15 +313,27 @@ async function main() {
   snippetText.maxLength = MAX_SNIPPET_BYTES;
   snippetLabel.textContent = fillRuntimeTokens(msg.send.snippetLabelWithMax);
 
+  if (BENCHMARK) {
+    cfgFps.value = String(BENCHMARK_TX_FPS);
+    cfgGrid.value = String(BENCHMARK_GRID_CODES);
+  } else {
+    displayRefreshHz = await measureDisplayRefreshRate();
+    const recommended = recommendedSenderProfile({
+      refreshHz: displayRefreshHz,
+      shortSideCssPx: Math.min(window.innerWidth, window.innerHeight),
+    });
+    cfgFps.value = String(recommended.txFps);
+    cfgGrid.value = String(recommended.gridCodes);
+  }
+
   document.querySelector('.mode-nav a[href="../send/"]')?.setAttribute("aria-current", "page");
   if (DEMO || BENCHMARK) {
     const current = document.querySelector('.mode-nav a[href="../send/"]');
     if (current) current.textContent = BENCHMARK ? msg.send.navBenchmark : msg.send.navDemo;
     const paneLabel = paneDemo.querySelector("span");
     if (BENCHMARK && paneLabel) paneLabel.textContent = msg.send.benchmarkPayload;
-    // Benchmark preset: 4 codes (2×2). The announcement records the actual
-    // settings either way; this just makes the canonical rig the default.
-    if (BENCHMARK) cfgGrid.value = "4";
+    // Benchmark settings were pinned above before any stream can start. The
+    // announcement records the actual settings too.
     for (const button of document.querySelectorAll<HTMLButtonElement>("[data-demo]")) {
       // Benchmark mode shows only the canonical payload; demo mode hides it.
       button.hidden = BENCHMARK ? !button.hasAttribute("data-benchmark") : button.hasAttribute("data-benchmark");
@@ -317,7 +356,7 @@ async function main() {
   }
   applyMode();
   window.addEventListener("resize", () => resizeDisplay?.());
-  for (const el of [cfgFps, cfgBytes, cfgEcc, cfgGrid, cfgSize]) {
+  for (const el of [cfgFps, cfgBytes, cfgEcc, cfgGrid, cfgSize, cfgColor]) {
     el.addEventListener("change", () => void startStream());
   }
   await requestScreenWakeLock();
@@ -335,6 +374,8 @@ function scrollStageIntoView() {
 async function startStream(revealStage = false) {
   const gen = ++generation;
   resizeDisplay = null;
+  streamQrPool?.terminate();
+  streamQrPool = null;
   // Stale until this stream's first frame locks its version and refills them.
   showStreamPanels(false);
   if (!selectedFile) {
@@ -353,6 +394,7 @@ async function startStream(revealStage = false) {
   const gridCodes = Number(cfgGrid.value) || 1;
   const { cols: gridCols, rows: gridRows } = gridDims(gridCodes);
   const displayPx = Number(cfgSize.value);
+  const colorLayers = cfgColor.checked;
 
   const sessionId = (Math.floor(Math.random() * 0xffff) + 1) & 0xffff;
   const blockLen = blockLength(frameBytes);
@@ -382,10 +424,7 @@ async function startStream(revealStage = false) {
     blockLen,
     totalLen: payload.length,
     payloadFnv: fnv1a(payload),
-    // No feature bits: this build sends the plain v3 format (see FLAG_* in
-    // protocol.ts). Spelled out rather than defaulted so adding a flag is a
-    // decision made here, not an omission.
-    flags: 0,
+    flags: colorLayers ? FLAG_COLOR_LAYERS : 0,
   };
 
   let version: number | undefined; // locked after the first frame
@@ -397,7 +436,12 @@ async function startStream(revealStage = false) {
   // the same dimensions), so a mid-stream resize repaints from here instead of
   // leaving blank cells until the stagger rotation reaches them again.
   const cells: (ImageData | null)[] = new Array<ImageData | null>(gridCodes).fill(null);
-  let nextSeq = 0;
+  const results = new Map<number, QrGenResult>();
+  let nextResultId = 0; // next completed visual frame the paint queue may consume
+  let issuedResultId = 0; // next visual frame handed to a worker
+  let nextPrimarySeq = 0; // kept consecutive for receivers that ignore chroma
+  let generatorFailed = false;
+  const lookahead = LOOKAHEAD * gridCodes;
   stage.hidden = false;
 
   const sizeCanvas = () => {
@@ -460,89 +504,98 @@ async function startStream(revealStage = false) {
     ctx.drawImage(staging, 0, 0, canvas.width, canvas.height);
   };
 
-  const makeCode = (): ReturnType<typeof QRCode.create> => {
-    const bytes = packFrame({ ...header, seq: nextSeq }, encoder.encode(nextSeq));
-    nextSeq++;
-    // Every code carries the same byte length at the same ECC with the same
-    // pinned mask, so once the first one locks the version every later
-    // QRCode.create lands on identical geometry — required for tiling.
-    return QRCode.create([{ data: bytes, mode: "byte" } as unknown as QRCode.QRCodeSegment], {
-      errorCorrectionLevel: ecc,
-      version,
-      maskPattern: 4,
-    });
+  /** Lock geometry and expose stream metadata when the first ordered worker
+   * result arrives. Later results have the same byte length, ECC, and pinned
+   * mask, so they necessarily use the same version. */
+  const lockFirstFrame = (frame: QrGenResult) => {
+    version = frame.version;
+    modules = frame.size - 2 * MARGIN;
+    sizeCanvas();
+    resizeDisplay = sizeCanvas;
+    // Scroll only now: before sizeCanvas() the canvas is still 16×16, so the
+    // scroll target would be the wrong height.
+    if (revealStage) scrollStageIntoView();
+    // The stream's parameters live at the bottom of Transfer settings, next
+    // to the knobs that produced them; the status line stays for prose.
+    spec("spec-fps").textContent = msg.send.fpsValue(String(txFps), gridCodes);
+    spec("spec-frame").textContent = msg.send.frameBytesValue(String(frameBytes), gridCodes);
+    spec("spec-qr").textContent = `V${version}${
+      gridCodes > 1 ? ` ×${gridCodes}` : ""
+    } · ECC ${ecc}${colorLayers ? ` · ${msg.send.colorBetaTag}` : ""}`;
+    spec("spec-payload").textContent = `${name} · ${formatBytesL(fileSize)}`;
+    spec("spec-compression").textContent =
+      compression === "gzip"
+        ? msg.send.gzipTo(formatBytesL(transmittedSize))
+        : msg.send.compressionNone;
+    spec("spec-k").textContent = `K = ${encoder.k}`;
+    showStreamPanels(true);
+    // The tail of the status line is the door to the share dialog. Built by
+    // hand because setStatus is textContent-only — and the next setStatus
+    // wiping the button out is exactly right.
+    setStatus(msg.send.streaming(name));
+    const share = document.createElement("button");
+    share.type = "button";
+    share.className = "text-button";
+    share.textContent = msg.send.shareReceiverLink;
+    share.addEventListener("click", openShareDialog);
+    specs.append(share);
+    // npm run diagnostics: announce this stream's settings so the server
+    // log can pair them with the receiver's end-of-run report — the
+    // receiver only ever learns k and blockLen from the wire, never the
+    // knobs that produced them. Correlate the two by sessionId. The DEV
+    // guard is load-bearing: import.meta.env.DEV is statically false in
+    // every build, so no static site or standalone file ships this.
+    if (import.meta.env.DEV && import.meta.env.VITE_DIAGNOSTICS === "1") {
+      void fetch("/__diagnostics", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          role: "sender",
+          when: new Date().toISOString(),
+          sessionId,
+          payload: {
+            name,
+            fileBytes: fileSize,
+            containerBytes: payload.length,
+            transmittedBytes: transmittedSize,
+            compression,
+          },
+          settings: {
+            txFps,
+            frameBytes,
+            ecc,
+            gridCodes,
+            layout: `${gridCols}×${gridRows}`,
+            displayPx,
+            colorLayers,
+            displayRefreshHz: displayRefreshHz
+              ? Number(displayRefreshHz.toFixed(1))
+              : null,
+          },
+          qr: { version, modules },
+          fountain: { k: encoder.k, blockLen },
+          ua: navigator.userAgent,
+        }),
+      }).catch(() => undefined);
+    }
   };
 
-  const makeCell = (): ImageData => {
-    const qr = makeCode();
-    if (version === undefined) {
-      version = qr.version;
-      modules = qr.modules.size;
-      sizeCanvas();
-      resizeDisplay = sizeCanvas;
-      // Scroll only now: before sizeCanvas() the canvas is still 16×16, so the
-      // scroll target would be the wrong height.
-      if (revealStage) scrollStageIntoView();
-      // The stream's parameters live at the bottom of Transfer settings, next
-      // to the knobs that produced them; the status line stays for prose.
-      spec("spec-fps").textContent = msg.send.fpsValue(String(txFps), gridCodes);
-      spec("spec-frame").textContent = msg.send.frameBytesValue(String(frameBytes), gridCodes);
-      spec("spec-qr").textContent =
-        `V${version}${gridCodes > 1 ? ` ×${gridCodes}` : ""} · ECC ${ecc}`;
-      spec("spec-payload").textContent = `${name} · ${formatBytesL(fileSize)}`;
-      spec("spec-compression").textContent =
-        compression === "gzip" ? msg.send.gzipTo(formatBytesL(transmittedSize)) : msg.send.compressionNone;
-      spec("spec-k").textContent = `K = ${encoder.k}`;
-      showStreamPanels(true);
-      // The tail of the status line is the door to the share dialog. Built by
-      // hand because setStatus is textContent-only — and the next setStatus
-      // wiping the button out is exactly right.
-      setStatus(msg.send.streaming(name));
-      const share = document.createElement("button");
-      share.type = "button";
-      share.className = "text-button";
-      share.textContent = msg.send.shareReceiverLink;
-      share.addEventListener("click", openShareDialog);
-      specs.append(share);
-      // npm run diagnostics: announce this stream's settings so the server
-      // log can pair them with the receiver's end-of-run report — the
-      // receiver only ever learns k and blockLen from the wire, never the
-      // knobs that produced them. Correlate the two by sessionId. The DEV
-      // guard is load-bearing: import.meta.env.DEV is statically false in
-      // every build, so no static site or standalone file ships this.
-      if (import.meta.env.DEV && import.meta.env.VITE_DIAGNOSTICS === "1") {
-        void fetch("/__diagnostics", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            role: "sender",
-            when: new Date().toISOString(),
-            sessionId,
-            payload: {
-              name,
-              fileBytes: fileSize,
-              containerBytes: payload.length,
-              transmittedBytes: transmittedSize,
-              compression,
-            },
-            settings: {
-              txFps,
-              frameBytes,
-              ecc,
-              gridCodes,
-              layout: `${gridCols}×${gridRows}`,
-              displayPx,
-            },
-            qr: { version, modules },
-            fountain: { k: encoder.k, blockLen },
-            ua: navigator.userAgent,
-          }),
-        }).catch(() => undefined);
-      }
-    }
-    const raster = rasterizeQr(qr.modules.size, qr.modules.data, MARGIN);
-    return new ImageData(new Uint8ClampedArray(raster.pixels.buffer), raster.size, raster.size);
+  const completeFrame = (frame: QrGenResult) => {
+    if (generatorFailed || gen !== generation) return;
+    results.set(frame.id, frame);
+    pump();
   };
+
+  const onQrError = (error: QrGenError) => {
+    if (generatorFailed || gen !== generation) return;
+    generatorFailed = true;
+    streamQrPool?.terminate();
+    streamQrPool = null;
+    showError(error.error);
+  };
+
+  const qrPool = new QrGenPool(QR_WORKERS, completeFrame, onQrError, createQrWorker);
+  streamQrPool = qrPool;
 
   /**
    * Refill the lookahead, generating at most `max` frames per call.
@@ -553,16 +606,30 @@ async function startStream(revealStage = false) {
    * one frame per tick keeps the amortisation that gave us: a rAF callback
    * never pays for more than the single frame it just consumed.
    */
-  let generatorFailed = false;
-  const lookahead = LOOKAHEAD * gridCodes;
   const pump = (max = lookahead) => {
     if (generatorFailed || gen !== generation) return;
-    try {
-      for (let n = 0; n < max && queue.length < lookahead; n++) queue.push(makeCell());
-    } catch (err) {
-      // e.g. frame bytes over capacity for the chosen ECC level
-      generatorFailed = true;
-      showError(err instanceof Error ? err.message : String(err));
+    // Workers may finish out of order; only contiguous sequence ids enter the
+    // paint queue, preserving the wire sequence and deterministic carousel.
+    for (let n = 0; n < max && queue.length < lookahead && results.has(nextResultId); n++) {
+      const frame = results.get(nextResultId)!;
+      results.delete(nextResultId);
+      if (version === undefined) lockFirstFrame(frame);
+      queue.push(new ImageData(new Uint8ClampedArray(frame.pixels.buffer), frame.size, frame.size));
+      nextResultId++;
+    }
+    while (issuedResultId < nextResultId + lookahead) {
+      const primarySeq = nextPrimarySeq++;
+      const bytes = packFrame({ ...header, seq: primarySeq }, encoder.encode(primarySeq));
+      let auxBytes: Uint8Array | undefined;
+      if (colorLayers) {
+        const auxiliarySeq = colorAuxSequence(primarySeq, encoder.k);
+        auxBytes = packFrame(
+          { ...header, seq: auxiliarySeq },
+          encoder.encode(auxiliarySeq),
+        );
+      }
+      qrPool.submit({ id: issuedResultId, version, ecc, bytes, auxBytes });
+      issuedResultId++;
     }
   };
   pump();

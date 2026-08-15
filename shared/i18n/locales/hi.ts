@@ -84,6 +84,9 @@ export const messages: Messages = {
     layout4: "4 कोड (2×2)",
     layout6: "6 कोड (2×3)",
     settingDisplaySize: "डिस्प्ले साइज़",
+    colorBetaLabel: "रंग चैनल (बीटा)",
+    colorBetaHint: "प्रति QR फ़्रेम दोगुने करता है; पहले दोनों स्क्रीन जाँचें।",
+    colorBetaTag: "रंग बीटा",
     specTxRate: "tx रेट",
     specFramePayload: "फ़्रेम पेलोड",
     specQr: "qr",
@@ -179,6 +182,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} फ़्रेम · डिकोड जारी`,
     aboutEta: (duration, frames) => `लगभग ${duration} · ${frames} फ़्रेम`,
     etaTotal: (duration) => `कुल ${duration}`,
+    resyncing: "रिकवर हुए डेटा का सत्यापन नहीं हुआ। फ़िर से सिंक करके जारी रखा जा रहा है…",
+    resyncRestartSender: "अगर यह बार-बार हो, तो भेजने वाले को दोबारा शुरू करें।",
     transferFailedShort: "ट्रांसफ़र विफल",
     transferFailedDetail:
       "उस स्ट्रीम से कुछ भी काम का नहीं निकला। भेजने वाले को दोबारा शुरू करके फिर से स्कैन करें — " +

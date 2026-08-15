@@ -86,6 +86,9 @@ export const messages: Messages = {
     layout4: "4 кода (2×2)",
     layout6: "6 кодов (2×3)",
     settingDisplaySize: "размер на экране",
+    colorBetaLabel: "цветовой канал (бета)",
+    colorBetaHint: "Удваивает число кадров в коде; сначала проверьте оба экрана.",
+    colorBetaTag: "цвет, бета",
     specTxRate: "скорость передачи",
     specFramePayload: "данные кадра",
     specQr: "qr",
@@ -186,6 +189,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `кадров: ${frames} · декодирование`,
     aboutEta: (duration, frames) => `Около ${duration} · кадров: ${frames}`,
     etaTotal: (duration) => `всего ${duration}`,
+    resyncing: "Восстановленные данные не прошли проверку. Повторная синхронизация…",
+    resyncRestartSender: "Если это повторяется, перезапустите отправителя.",
     transferFailedShort: "Передача не удалась",
     transferFailedDetail:
       "Из этого потока не удалось извлечь ничего пригодного. Перезапустите отправителя " +

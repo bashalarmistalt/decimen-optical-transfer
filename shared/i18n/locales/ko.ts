@@ -84,6 +84,9 @@ export const messages: Messages = {
     layout4: "코드 4개 (2×2)",
     layout6: "코드 6개 (2×3)",
     settingDisplaySize: "표시 크기",
+    colorBetaLabel: "컬러 채널(베타)",
+    colorBetaHint: "QR당 프레임을 두 배로 늘립니다. 먼저 두 화면에서 테스트하세요.",
+    colorBetaTag: "컬러 베타",
     specTxRate: "송신 속도",
     specFramePayload: "프레임 페이로드",
     specQr: "QR",
@@ -180,6 +183,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} 프레임 · 디코딩 중`,
     aboutEta: (duration, frames) => `약 ${duration} · ${frames} 프레임`,
     etaTotal: (duration) => `총 ${duration}`,
+    resyncing: "복구한 데이터를 검증하지 못했습니다. 다시 동기화하며 계속합니다…",
+    resyncRestartSender: "계속 발생하면 보내는 쪽을 다시 시작하세요.",
     transferFailedShort: "전송 실패",
     transferFailedDetail:
       "이 스트림에서는 쓸 수 있는 데이터가 나오지 않았습니다. 보내는 쪽을 다시 시작한 뒤 " +

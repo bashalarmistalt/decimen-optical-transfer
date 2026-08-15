@@ -87,6 +87,9 @@ export const messages: Messages = {
     layout4: "4 codes (2×2)",
     layout6: "6 codes (2×3)",
     settingDisplaySize: "display size",
+    colorBetaLabel: "color channel (beta)",
+    colorBetaHint: "Doubles frames per QR; test both screens first.",
+    colorBetaTag: "color beta",
     specTxRate: "tx rate",
     specFramePayload: "frame payload",
     specQr: "qr",
@@ -180,6 +183,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} frames · decoding`,
     aboutEta: (duration, frames) => `About ${duration} · ${frames} frames`,
     etaTotal: (duration) => `${duration} total`,
+    resyncing: "Recovered bytes did not verify. Re-syncing and continuing…",
+    resyncRestartSender: "If this keeps happening, restart the sender.",
     transferFailedShort: "Transfer failed",
     transferFailedDetail:
       "Nothing usable came out of that stream. Restart the sender, then scan it again — " +

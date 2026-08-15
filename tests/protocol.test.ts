@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   classifyFrame,
   CRITICAL_FLAGS,
+  FLAG_COLOR_LAYERS,
   FLAG_ENCRYPTED,
   HEADER_LEN,
   type FrameHeader,
@@ -376,6 +377,17 @@ test("an unknown ignorable flag decodes anyway, and rides through to the header"
     assert.deepEqual(classifyFrame(frame), { kind: "ok" }, `flag 0x${bit.toString(16)}`);
     assert.equal(parseFrame(frame)!.header.flags, bit, "the bit survives parsing");
   }
+});
+
+test("the color-layer flag is explicitly backward compatible", () => {
+  assert.equal(FLAG_COLOR_LAYERS & CRITICAL_FLAGS, 0);
+  const frame = withByte(3, FLAG_COLOR_LAYERS);
+  assert.deepEqual(classifyFrame(frame), { kind: "ok" });
+  assert.equal(parseFrame(frame)!.header.flags, FLAG_COLOR_LAYERS);
+  assert.equal(
+    streamIdentity(parseFrame(frame)!.header),
+    streamIdentity(parseFrame(goodFrame())!.header),
+  );
 });
 
 test("a mixed flags byte is judged on its critical half alone", () => {

@@ -23,6 +23,7 @@ import { rootPwaHead } from "./build/root-pwa-head";
 import { licenseBanner } from "./build/license-banner";
 import { diagnosticsEndpoint } from "./build/diagnostics-endpoint";
 import { i18nPages } from "./build/i18n-pages";
+import { whoamiEndpoint } from "./build/whoami-endpoint";
 
 // Where the site is published, used only to make the social-card URLs absolute
 // — scrapers are inconsistent about resolving relative ones. Override with
@@ -205,6 +206,7 @@ export default defineConfig(({ mode }) => {
       i18nPages({ siteUrl: SITE_URL, tokens: TOKENS, manifest: MANIFEST_BASE }),
       licenseBanner(pkg.version),
       diagnosticsEndpoint(pkg.version),
+      whoamiEndpoint(pkg.version),
     ],
     build: {
       // Same ES2022/top-level-await floor as the standalone build above.

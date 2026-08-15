@@ -17,9 +17,21 @@ Changing anything restarts the stream; the receiver resets automatically off the
 
 | setting | default | notes |
 |---|---|---|
-| tx fps | 60 | tuned for a 120 Hz sender; on a 60 Hz screen drop to 24–30 if the receiver stalls |
+| tx fps | adaptive | 30 on a typical 60 Hz display; up to 60 when the display can hold each QR for about two refreshes |
 | bytes / frame | 2953 (QR v40) | the density ceiling — great phone-to-phone at close range; back off to 1465 (v27) for monitors or distance |
 | error correction | L | the fountain layer handles erasures; L is the right trade at these sizes |
+| layout | adaptive | 2 codes on phones; 4 on larger displays. One code is the compatibility/long-distance setting, not the fast preset |
 | display size | 900 px | capped by the screen; fullscreen ignores it |
+| color channel (beta) | off | opt-in two-frame QR; test the exact sending display and receiving camera before relying on it |
 
-Defaults favor the best-case demo. If a transfer crawls: bytes/frame → 1465, tx fps → 24, in that order.
+The measured 418 KB/s benchmark uses four codes. A single code commonly lands
+around 30–60 KB/s because goodput is the number of unique frames decoded each
+second times the fountain block size. If a transfer crawls even with the
+adaptive preset: bytes/frame → 1465, tx fps → 24, in that order.
+
+The color beta uses blue/black and yellow/white module pairs to carry a second
+fountain frame without changing the QR seen in luminance. A current receiver
+can recover both frames; an older v3 receiver ignores the feature flag and
+continues from the primary frames. Color performance depends on the display,
+camera, brightness, viewing angle, and room light, so leave it off unless that
+device pair has completed a verified test transfer.

@@ -16,11 +16,16 @@ Three pages, one shared core, a handful of single-purpose build plugins. No fram
 - `protocol.ts` — frame header pack/parse, file container, SHA-256 verification, stream identity.
 - `frame-capacity.ts` — QR capacity math: payload size → block length / count limits.
 - `qr-raster.ts` — QR module matrix → RGBA raster.
+- `color-layer.ts` — beta two-plane QR palette plus perspective-aware chroma sampling.
+- `color-sequence.ts` — complementary auxiliary fountain sequence mapping that leaves the primary stream consecutive.
 - `display.ts` — QR display-size fitting against the viewport.
 - `platform.ts` — `isIOS`/`isAndroid` sniffs and camera capability probing (torch, continuous focus, max fps). Policy: probe wherever probeable; sniff only for unprobeable behavior.
 - `worker-pool.ts` — decode worker pool; busy workers drop frames, the fountain absorbs it.
+- `qr-pool.ts` — bounded sender encode-worker queue; results may finish out of order and are reordered by sequence before paint.
 - `no-signal.ts` — pure timing policy for the "Nothing happening?" hint (short first delay, longer after dismissal).
 - `progress.ts` — frames-collected progress estimation and fountain-overhead model.
+- `decode-policy.ts` — pure crop/full-scan downscale and `tryHarder` policy.
+- `receiver-session.ts` — completion verification, race claims, and bounded duplicate filtering.
 - `send-settings.ts` — canonical tx settings lists; the sender's dropdowns and the no-signal advice both render from it.
 - `snippet.ts` — text-snippet container type.
 - `dialog.ts` — geometric backdrop-click close for `<dialog>`.
@@ -44,7 +49,7 @@ One file each, exact-match string surgery that **throws when it misses** — mar
 ## Vendored decoder (`vendor/decimen-codec/`)
 
 The compiled decode engine — a QR-only zxing-cpp build with a tracked fast
-path, released separately as
+path and, in the color beta, module-matrix decoding, released separately as
 [decimen-codec](https://github.com/bashalarmistalt/decimen-codec). The
 artifacts self-identify (banner + `version()`/`build()` exports); licensing
 in `NOTICE.md` alongside them.
