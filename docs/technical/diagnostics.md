@@ -93,8 +93,9 @@ npm run benchmark    # dev server, capture on, sender locked to the payload
 
 Benchmark mode presets the sender to 4 codes (2×2); the sender's stream
 announcement records the actual settings, and the promoted record carries
-the receiver's observed code count — a record always says how many codes
-it was set with.
+the validated sender settings (bytes/frame, tx fps, ECC, layout) alongside the
+receiver's observed code count. New records without a paired sender
+announcement are rejected; older records remain readable as legacy entries.
 
 Run the transfer as many times as you like; every report the rig receives
 is stamped (`_meta`: app version, receipt time) and saved to the gitignored

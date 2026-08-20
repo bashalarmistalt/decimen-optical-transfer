@@ -21,6 +21,11 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFi
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import {
+  formatSenderSettings,
+  parseSenderSettings,
+  type SenderSettings,
+} from "./benchmark-settings";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const RECORDS_PATH = resolve(ROOT, "benchmarks/records.json");
@@ -50,6 +55,9 @@ interface RecordEntry {
   version: string | null; // app version stamped into the run by the endpoint
   runFile: string; // repo-relative receipt path
   badge: string; // preformatted for the shields.io dynamic-JSON badge
+  /** Sender announcement paired by session id. Optional only for records
+   * created before provenance capture was added. New promotions require it. */
+  settings?: SenderSettings;
 }
 
 interface CanonicalPayload {
@@ -207,9 +215,14 @@ interface CapturedRun {
 
 /** Load every captured report; pair receiver runs with sender announcements
  *  by sessionId for the device label's sending half. */
-function loadCaptured(paths: string[]): { receivers: CapturedRun[]; senderUa: Map<unknown, unknown> } {
+function loadCaptured(paths: string[]): {
+  receivers: CapturedRun[];
+  senderUa: Map<unknown, unknown>;
+  senderSettings: Map<unknown, SenderSettings>;
+} {
   const receivers: CapturedRun[] = [];
   const senderUa = new Map<unknown, unknown>();
+  const senderSettings = new Map<unknown, SenderSettings>();
   for (const path of paths) {
     let report: Report;
     try {
@@ -218,9 +231,13 @@ function loadCaptured(paths: string[]): { receivers: CapturedRun[]; senderUa: Ma
       continue; // half-written or foreign file — not a candidate
     }
     if (report.role === "receiver") receivers.push({ path, report });
-    else if (report.role === "sender" && report.settings) senderUa.set(report.sessionId, report.ua);
+    else if (report.role === "sender" && report.settings) {
+      senderUa.set(report.sessionId, report.ua);
+      const settings = parseSenderSettings(report.settings);
+      if (settings) senderSettings.set(report.sessionId, settings);
+    }
   }
-  return { receivers, senderUa };
+  return { receivers, senderUa, senderSettings };
 }
 
 async function promote(explicitPath?: string): Promise<void> {
@@ -241,24 +258,25 @@ async function promote(explicitPath?: string): Promise<void> {
     .filter((e) => e.isFile() && e.name.endsWith(".json"))
     .map((e) => resolve(CAPTURE_DIR, e.name))
     .sort();
-  const { receivers, senderUa } = loadCaptured(
+  const { receivers, senderUa, senderSettings } = loadCaptured(
     explicitPath ? [...capturedPaths, resolve(explicitPath)] : capturedPaths,
   );
   const pool = explicitPath
     ? receivers.filter((r) => r.path === resolve(explicitPath))
     : receivers;
 
-  const eligible = pool.filter(
+  const successful = pool.filter(
     (r) => r.report.ok === true && r.report.payloadSha256 === canonical.sha256,
   );
+  const eligible = successful.filter((r) => senderSettings.has(r.report.sessionId));
   console.log(
-    `${pool.length} receiver run(s) scanned, ${eligible.length} eligible ` +
-      "(successful + canonical payload)",
+    `${pool.length} receiver run(s) scanned, ${successful.length} successful canonical, ` +
+      `${eligible.length} with paired sender settings`,
   );
   if (eligible.length === 0)
     throw new Error(
-      "no eligible runs — record runs must complete successfully and transfer " +
-        `the canonical ${canonical.file} (npm run benchmark)`,
+      "no eligible runs — record runs need a successful canonical receiver report " +
+        "and its paired sender settings announcement from the same diagnostics session",
     );
 
   // Devices resolve first (registry list, remembered per UA) because the
@@ -321,6 +339,7 @@ async function promote(explicitPath?: string): Promise<void> {
       version: typeof meta.appVersion === "string" ? meta.appVersion : null,
       runFile: `benchmarks/runs/${stamp.slice(0, 19).replace(/:/g, "-")}-run.json`,
       badge: `${j.sustainedKBs} KB/s`,
+      settings: senderSettings.get(report.sessionId)!,
     };
   };
 
@@ -347,6 +366,7 @@ async function promote(explicitPath?: string): Promise<void> {
       `${entry.category} record: ${entry.sustainedKBs} KB/s sustained` +
         `${entry.peakKBs ? ` / ${entry.peakKBs} peak` : ""} (${entry.devices}, ${entry.date})`,
     );
+    console.log(`  settings: ${formatSenderSettings(entry.settings!)}`);
   }
   refreshBest(records);
   writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2) + "\n");
@@ -369,7 +389,8 @@ function tableRow(e: RecordEntry): string {
   const mb = (e.payloadBytes / 1024 / 1024).toFixed(1);
   const when = e.version ? `${e.date} (v${e.version})` : e.date;
   const peak = e.peakKBs ? `**${e.peakKBs} KB/s**` : "—";
-  return `| ${e.category} | **${e.sustainedKBs} KB/s** | ${peak} | ${mb} MB in ${e.seconds.toFixed(1)} s | ${e.codes} | ${e.devices} | ${when} | [run](${e.runFile}) |`;
+  const settings = e.settings ? formatSenderSettings(e.settings) : "legacy record";
+  return `| ${e.category} | **${e.sustainedKBs} KB/s** | ${peak} | ${mb} MB in ${e.seconds.toFixed(1)} s | ${e.codes} | ${settings} | ${e.devices} | ${when} | [run](${e.runFile}) |`;
 }
 
 function renderReadme(records: Records): void {
@@ -385,11 +406,12 @@ function renderReadme(records: Records): void {
     lines.push(
       "One record run per device pair. Sustained is whole-transfer goodput;",
       "peak is the best ≥1 s window inside that same run. Every row links to",
-      "the full diagnostics run report that produced it",
+      "the full diagnostics run report that produced it; settings identify the",
+      "sender configuration used by newly promoted records",
       "([how these are measured](docs/technical/diagnostics.md)).",
       "",
-      "| pair | sustained | peak | transfer | codes | devices | when | receipt |",
-      "|---|---|---|---|---|---|---|---|",
+      "| pair | sustained | peak | transfer | codes | settings | devices | when | receipt |",
+      "|---|---|---|---|---|---|---|---|---|",
       ...entries.sort((a, b) => b.sustainedKBs - a.sustainedKBs).map(tableRow),
     );
   }
