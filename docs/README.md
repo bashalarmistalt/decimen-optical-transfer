@@ -3,7 +3,7 @@
 ## Using Decimen
 
 - [Quick start](user/quick-start.md) — two devices, one minute.
-- [Sending](user/sending.md) — files, text snippets, transfer settings, fullscreen, sharing.
+- [Sending](user/sending.md) — files, text snippets, transfer settings, fullscreen, sharing, animation export.
 - [Receiving](user/receiving.md) — camera, settings, what happens when a transfer lands.
 - [Troubleshooting](user/troubleshooting.md) — when nothing decodes.
 - [Install & offline](user/install-and-offline.md) — PWA install, offline use, standalone files, demo mode.

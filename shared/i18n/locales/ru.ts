@@ -126,6 +126,22 @@ export const messages: Messages = {
       codes > 1 ? `${bytes} байт × ${codes}` : `${bytes} байт`,
     gzipTo: (size) => `gzip → ${size}`,
     compressionNone: "нет",
+    exportSummary: "Экспорт анимации",
+    exportIntro:
+      "Сохраните этот поток как зацикленный файл анимации. Вставьте его в видео или на страницу — " +
+      "любая камера, направленная на воспроизводимый цикл, сможет принять файл.",
+    exportFormat: "формат",
+    exportFormatZip: "PNG-последовательность (ZIP)",
+    exportFps: "частота кадров",
+    exportScale: "масштаб модулей",
+    exportCycles: "циклы",
+    exportStart: "Экспорт",
+    exportCancel: "Отмена",
+    exportEstimate: (frames, size, loop) => `${frames} кадров · ~${size} · цикл ${loop}`,
+    exportProgress: (percent) => `рендеринг… ${percent}%`,
+    exportFailed: (message) => `не удалось экспортировать: ${message}`,
+    exportZipLimit: (frames, max) =>
+      `${frames} кадров превышают предел ZIP в ${max}. Уменьшите его: меньше циклов, более широкая компоновка или больше байт / кадр.`,
   },
 
   receive: {

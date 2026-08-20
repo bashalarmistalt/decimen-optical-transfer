@@ -121,6 +121,22 @@ export const messages: Messages = {
       codes > 1 ? `${bytes} بايت × ${codes}` : `${bytes} بايت`,
     gzipTo: (size) => `gzip إلى ${size}`,
     compressionNone: "بدون",
+    exportSummary: "تصدير الرسم المتحرك",
+    exportIntro:
+      "احفظ هذا البث كملف رسم متحرك يتكرر باستمرار. ضمِّنه في فيديو أو صفحة — " +
+      "وأي كاميرا موجهة نحو الحلقة أثناء تشغيلها يمكنها استقبال الملف.",
+    exportFormat: "الصيغة",
+    exportFormatZip: "تسلسل PNG ‏(ZIP)",
+    exportFps: "معدل الإطارات",
+    exportScale: "مقياس الوحدات",
+    exportCycles: "الدورات",
+    exportStart: "تصدير",
+    exportCancel: "إلغاء",
+    exportEstimate: (frames, size, loop) => `${frames} إطارًا · ~${size} · حلقة مدتها ${loop}`,
+    exportProgress: (percent) => `جارٍ الإنشاء… ${percent}%`,
+    exportFailed: (message) => `فشل التصدير: ${message}`,
+    exportZipLimit: (frames, max) =>
+      `${frames} إطارًا يتجاوز حدّ ZIP البالغ ${max}. قلّله بعدد دورات أقل، أو تخطيط أوسع، أو المزيد من البايتات / إطار.`,
   },
 
   receive: {

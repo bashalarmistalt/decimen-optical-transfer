@@ -119,6 +119,21 @@ export const messages: Messages = {
       codes > 1 ? `${bytes} 字节 × ${codes}` : `${bytes} 字节`,
     gzipTo: (size) => `gzip → ${size}`,
     compressionNone: "无",
+    exportSummary: "导出动画",
+    exportIntro:
+      "将此数据流保存为循环播放的动画文件。把它嵌入视频或网页——任何对准播放中循环的相机都能接收该文件。",
+    exportFormat: "格式",
+    exportFormatZip: "PNG 序列(ZIP)",
+    exportFps: "帧率",
+    exportScale: "模块缩放",
+    exportCycles: "循环次数",
+    exportStart: "导出",
+    exportCancel: "取消",
+    exportEstimate: (frames, size, loop) => `${frames} 帧 · 约 ${size} · 循环 ${loop}`,
+    exportProgress: (percent) => `渲染中… ${percent}%`,
+    exportFailed: (message) => `导出失败:${message}`,
+    exportZipLimit: (frames, max) =>
+      `${frames} 帧超过 ZIP 上限 ${max}。可通过减少循环次数、采用更大的布局或提高每帧字节数来降低。`,
   },
 
   receive: {

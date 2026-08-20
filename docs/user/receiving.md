@@ -1,6 +1,6 @@
 # Receiving
 
-Open `/receive/`, tap **Start camera**, point it at the sender's code. There is no pairing: the receiver locks onto any Decimen stream mid-flight, works out on its own whether a file or text is arriving, and restarts cleanly if the sender does.
+Open `/receive/`, tap **Start camera**, point it at the sender's code. There is no pairing: the receiver locks onto any Decimen stream mid-flight, works out on its own whether a file or text is arriving, and restarts cleanly if the sender does. It also cannot tell a live sender from an [exported animation](sending.md#export-animation) playing in a page or a video — point it at either.
 
 Fill the camera view with the code and prop the phone against something — autofocus hunting from hand tremor is the #1 throughput killer. On cameras that support it (Android, typically) continuous autofocus is enabled automatically.
 

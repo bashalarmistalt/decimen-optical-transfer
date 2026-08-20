@@ -121,6 +121,22 @@ export const messages: Messages = {
       codes > 1 ? `${bytes} bytes × ${codes}` : `${bytes} bytes`,
     gzipTo: (size) => `gzip → ${size}`,
     compressionNone: "nenhuma",
+    exportSummary: "Exportar animação",
+    exportIntro:
+      "Salve esta transmissão como um arquivo de animação em loop. Incorpore-o em um vídeo ou uma página: " +
+      "qualquer câmera apontada para o loop em reprodução pode receber o arquivo.",
+    exportFormat: "formato",
+    exportFormatZip: "Sequência PNG (ZIP)",
+    exportFps: "taxa de quadros",
+    exportScale: "escala dos módulos",
+    exportCycles: "ciclos",
+    exportStart: "Exportar",
+    exportCancel: "Cancelar",
+    exportEstimate: (frames, size, loop) => `${frames} quadros · ~${size} · loop de ${loop}`,
+    exportProgress: (percent) => `renderizando… ${percent}%`,
+    exportFailed: (message) => `falha na exportação: ${message}`,
+    exportZipLimit: (frames, max) =>
+      `${frames} quadros excedem o limite ZIP de ${max}. Reduza com menos ciclos, um layout mais amplo ou mais bytes / quadro.`,
   },
 
   receive: {

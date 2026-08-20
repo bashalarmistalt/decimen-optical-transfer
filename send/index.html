@@ -98,6 +98,49 @@
           <div><dt data-i18n="send.specCompression">compression</dt><dd id="spec-compression">—</dd></div>
           <div><dt data-i18n="send.specFountainBlocks">fountain blocks</dt><dd id="spec-k">—</dd></div>
         </dl>
+        <!-- Save the stream as a looping animation file instead of showing it
+             live. A subsection rather than a sibling panel: it has no settings
+             of its own in the sense the knobs above do — it renders whatever
+             they already describe, and only adds how to package the result.
+             Hidden until a stream is up. Frames, estimate and download are all
+             main.ts (runExport / updateExportEstimate). -->
+        <details class="settings subsection" id="export-panel" hidden>
+          <summary data-i18n="send.exportSummary">Export animation</summary>
+          <p class="hint" data-i18n="send.exportIntro">
+            Save this stream as a looping animation file. Embed it in a video or a page —
+            any camera pointed at the playing loop can receive the file.
+          </p>
+          <div class="row">
+            <label>
+              <span data-i18n="send.exportFormat">format</span>
+              <select id="cfg-export-format">
+                <option value="apng" selected>APNG</option><option value="zip" data-i18n="send.exportFormatZip">PNG sequence (ZIP)</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="send.exportFps">frame rate</span>
+              <select id="cfg-export-fps">
+                <option>5</option><option selected>10</option><option>15</option><option>30</option><option>60</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="send.exportScale">module scale</span>
+              <select id="cfg-export-scale">
+                <option value="1">1×</option><option value="2">2×</option><option value="4" selected>4×</option><option value="8">8×</option>
+              </select>
+            </label>
+            <label>
+              <span data-i18n="send.exportCycles">cycles</span>
+              <select id="cfg-export-cycles">
+                <option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option>
+              </select>
+            </label>
+          </div>
+          <p class="hint" id="export-estimate">—</p>
+          <div class="note-actions">
+            <button id="export-start" type="button" data-i18n="send.exportStart">Export</button>
+          </div>
+        </details>
       </details>
       <div class="hint status-line" id="specs" data-i18n="send.statusChooseFile">Choose a file to begin</div>
       <dialog class="help-dialog share-dialog" id="share-dialog" aria-labelledby="share-title" data-share-title="Decimen Optical Transfer — receiver" data-i18n-attr="data-share-title:send.shareTitleData">

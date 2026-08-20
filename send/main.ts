@@ -12,7 +12,6 @@
 // - Error correction stays at L by default: the fountain layer already
 //   handles erasures, and a frame is either decoded whole or discarded.
 
-import QRCode from "qrcode";
 import { fitQrDisplaySize } from "../shared/display";
 import { gridDims, rasterizeQr } from "../shared/qr-raster";
 import {
@@ -20,10 +19,19 @@ import {
   fmtInt,
   fmtNumber,
   formatBytesL,
+  formatDurationL,
   initI18n,
   localizeError,
   msg,
 } from "../shared/i18n";
+import { QUIET_ZONE_MODULES as MARGIN, createFrameQr, type EccLevel, type FrameQr } from "./qr-frame";
+import {
+  ZIP_MAX_FRAMES,
+  estimateExportBytes,
+  exportAnimation,
+  planExport,
+  type ExportFormat,
+} from "./export";
 import {
   MAX_SOURCE_BLOCKS,
   blockLength,
@@ -49,7 +57,6 @@ import { wireShareDialog } from "../shared/share-dialog";
 
 await initI18n();
 
-const MARGIN = 4; // quiet-zone modules
 const LOOKAHEAD = 3;
 
 // `npm run demo` (vite --mode demo). Locks the sender to the two bundled
@@ -78,13 +85,23 @@ const modePicker = document.getElementById("mode-picker")!;
 const modeInputs = [...document.querySelectorAll<HTMLInputElement>('input[name="send-mode"]')];
 const streamSpecs = document.getElementById("stream-specs")!;
 const footerHint = document.getElementById("footer-hint")!;
+const exportPanel = document.getElementById("export-panel") as HTMLDetailsElement;
+const cfgExportFormat = document.getElementById("cfg-export-format") as HTMLSelectElement;
+const cfgExportFps = document.getElementById("cfg-export-fps") as HTMLSelectElement;
+const cfgExportScale = document.getElementById("cfg-export-scale") as HTMLSelectElement;
+const cfgExportCycles = document.getElementById("cfg-export-cycles") as HTMLSelectElement;
+const exportEstimate = document.getElementById("export-estimate")!;
+const exportButton = document.getElementById("export-start") as HTMLButtonElement;
 const spec = (id: string) => document.getElementById(id)!;
 
-/** Panels that only mean something while a stream is up: the spec grid at the
- *  bottom of Transfer settings, and the receiver hint under the status line. */
+/** Panels that only mean something while a stream is up: inside Transfer
+ *  settings, the spec grid and the animation-export subsection under it; and
+ *  the receiver hint under the status line. */
 function showStreamPanels(visible: boolean): void {
   streamSpecs.hidden = !visible;
   footerHint.hidden = !visible;
+  exportPanel.hidden = !visible;
+  if (visible) void updateExportEstimate();
 }
 
 const openShareDialog = wireShareDialog();
@@ -103,6 +120,13 @@ let selectedFile: {
 } | null = null;
 let generation = 0; // bumped on every restart; stale loops see it and die
 let resizeDisplay: (() => void) | null = null;
+// The animation export in flight, if any. It snapshots payload and settings at
+// click time, so knob changes let it finish; only losing the payload it
+// describes (new pick, stop) cancels it. The button doubles as Cancel.
+let activeExport: { cancelled: boolean } | null = null;
+// The last export's blob URL. Kept alive so the download outlives this
+// function; reclaimed when the next export replaces it.
+let lastExportUrl: string | null = null;
 
 const specsLine = statusLine(specs);
 const setStatus = specsLine.setStatus;
@@ -140,11 +164,118 @@ function updateFilePicker(): void {
       : fillRuntimeTokens(msg.send.anyFileUpTo);
 }
 
+function currentExportFormat(): ExportFormat {
+  return cfgExportFormat.value === "zip" ? "zip" : "apng";
+}
+
+/** The export panel's forecast line: frames, size, loop length. The size is
+ *  measured, not modeled — estimateExportBytes samples one real frame — so
+ *  this is async; the run counter drops a stale sample if the knobs moved (or
+ *  an export started) while it rendered. Skipped mid-export, where progress
+ *  reporting owns the line. */
+let estimateRun = 0;
+async function updateExportEstimate(): Promise<void> {
+  if (activeExport || !selectedFile) return;
+  const run = ++estimateRun;
+  const frameBytes = Number(cfgBytes.value);
+  const gridCodes = Number(cfgGrid.value) || 1;
+  const cycles = Number(cfgExportCycles.value);
+  const plan = planExport(selectedFile.payload.length, frameBytes, gridCodes, cycles);
+  // The classic ZIP format cannot hold more entries; APNG can. Refuse with the
+  // fix named rather than failing at the end of a long render.
+  const overZipLimit = currentExportFormat() === "zip" && plan.animationFrames > ZIP_MAX_FRAMES;
+  exportButton.disabled = overZipLimit;
+  if (overZipLimit) {
+    exportEstimate.textContent = msg.send.exportZipLimit(
+      fmtInt(plan.animationFrames),
+      fmtInt(ZIP_MAX_FRAMES),
+    );
+    return;
+  }
+  const size = await estimateExportBytes({
+    payload: selectedFile.payload,
+    frameBytes,
+    ecc: cfgEcc.value as EccLevel,
+    gridCodes,
+    scale: Number(cfgExportScale.value),
+    cycles,
+    format: currentExportFormat(),
+  });
+  if (run !== estimateRun || activeExport || !selectedFile) return;
+  exportEstimate.textContent = msg.send.exportEstimate(
+    fmtInt(plan.animationFrames),
+    formatBytesL(size),
+    formatDurationL(plan.animationFrames / Number(cfgExportFps.value)),
+  );
+}
+
+/**
+ * Render the armed payload into a downloadable animation file.
+ *
+ * Everything is snapshotted at click time, so the export stays internally
+ * consistent whatever the knobs do afterwards. Runs on the main thread with
+ * cooperative yields — the standalone build's CSP has no room for a worker —
+ * and reports progress through the estimate line.
+ */
+async function runExport(): Promise<void> {
+  if (activeExport) {
+    activeExport.cancelled = true;
+    return;
+  }
+  if (!selectedFile) return;
+  const run = { cancelled: false };
+  activeExport = run;
+  exportButton.textContent = msg.send.exportCancel;
+  const format = currentExportFormat();
+  const baseName = currentMode() === "snippet" ? "text" : selectedFile.name;
+  let failed = false;
+  try {
+    let shownPercent = -1;
+    const result = await exportAnimation({
+      payload: selectedFile.payload,
+      frameBytes: Number(cfgBytes.value),
+      ecc: cfgEcc.value as EccLevel,
+      gridCodes: Number(cfgGrid.value) || 1,
+      format,
+      fps: Number(cfgExportFps.value),
+      scale: Number(cfgExportScale.value),
+      cycles: Number(cfgExportCycles.value),
+      sessionId: (Math.floor(Math.random() * 0xffff) + 1) & 0xffff,
+      onProgress: (done, total) => {
+        const percent = Math.floor((done * 100) / total);
+        if (percent === shownPercent || run.cancelled) return;
+        shownPercent = percent;
+        exportEstimate.textContent = msg.send.exportProgress(fmtInt(percent));
+      },
+      isCancelled: () => run.cancelled,
+    });
+    if (result !== null) {
+      if (lastExportUrl) URL.revokeObjectURL(lastExportUrl);
+      const url = URL.createObjectURL(new Blob(result.parts as BlobPart[], { type: result.mimeType }));
+      lastExportUrl = url;
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${baseName}.decimen.${result.extension}`;
+      link.click();
+    }
+  } catch (error) {
+    failed = true;
+    exportEstimate.textContent = msg.send.exportFailed(localizeError(error));
+  } finally {
+    activeExport = null;
+    exportButton.textContent = msg.send.exportStart;
+  }
+  // Cancelled or done: hand the line back to the forecast. A failure keeps its
+  // message up — repainting the estimate would erase the only explanation.
+  if (!failed) void updateExportEstimate();
+}
+
 /** Tear the stream down and disarm the picker. The input is cleared so the
  *  same file can be picked again (change would not fire otherwise) and so a
  *  mode switch does not silently resurrect the stopped stream. */
 function stopTransfer(): void {
   generation++;
+  if (activeExport) activeExport.cancelled = true;
   selectedFile = null;
   setStageFullscreen(false);
   stage.hidden = true;
@@ -183,6 +314,7 @@ window.addEventListener("keydown", (event) => {
 /** Switching what we're sending kills any stream in flight and clears the stage. */
 function applyMode(): void {
   generation++;
+  if (activeExport) activeExport.cancelled = true;
   selectedFile = null;
   setStageFullscreen(false);
   stage.hidden = true;
@@ -223,6 +355,8 @@ async function startSelection(
   prepare: () => Promise<{ name: string; size: number; packed: PackedOpticalFile }>,
 ): Promise<void> {
   const selectionGeneration = ++generation;
+  // The payload a running export describes is being replaced — abandon it.
+  if (activeExport) activeExport.cancelled = true;
   selectedFile = null;
   stage.hidden = true;
   setStatus(status);
@@ -320,6 +454,10 @@ async function main() {
   for (const el of [cfgFps, cfgBytes, cfgEcc, cfgGrid, cfgSize]) {
     el.addEventListener("change", () => void startStream());
   }
+  for (const el of [cfgExportFormat, cfgExportFps, cfgExportScale, cfgExportCycles]) {
+    el.addEventListener("change", () => void updateExportEstimate());
+  }
+  exportButton.addEventListener("click", () => void runExport());
   await requestScreenWakeLock();
 }
 
@@ -460,17 +598,12 @@ async function startStream(revealStage = false) {
     ctx.drawImage(staging, 0, 0, canvas.width, canvas.height);
   };
 
-  const makeCode = (): ReturnType<typeof QRCode.create> => {
+  const makeCode = (): FrameQr => {
     const bytes = packFrame({ ...header, seq: nextSeq }, encoder.encode(nextSeq));
     nextSeq++;
-    // Every code carries the same byte length at the same ECC with the same
-    // pinned mask, so once the first one locks the version every later
-    // QRCode.create lands on identical geometry — required for tiling.
-    return QRCode.create([{ data: bytes, mode: "byte" } as unknown as QRCode.QRCodeSegment], {
-      errorCorrectionLevel: ecc,
-      version,
-      maskPattern: 4,
-    });
+    // Pinned mask and version locking live in qr-frame.ts, shared with the
+    // animation exporter so the two paths cannot drift apart.
+    return createFrameQr(bytes, ecc, version);
   };
 
   const makeCell = (): ImageData => {
@@ -494,10 +627,23 @@ async function startStream(revealStage = false) {
         compression === "gzip" ? msg.send.gzipTo(formatBytesL(transmittedSize)) : msg.send.compressionNone;
       spec("spec-k").textContent = `K = ${encoder.k}`;
       showStreamPanels(true);
-      // The tail of the status line is the door to the share dialog. Built by
-      // hand because setStatus is textContent-only — and the next setStatus
-      // wiping the button out is exactly right.
-      setStatus(msg.send.streaming(name));
+      // The status line is built by hand: setStatus is textContent-only, and
+      // the next setStatus wiping these children out is exactly right.
+      //
+      // The file name gets its own element so it can be styled apart from the
+      // sentence around it, but WHERE it sits is the locale's business —
+      // Japanese, Korean and Hindi all put it first. So render the message
+      // with a sentinel in the name's place and split on that, rather than
+      // assuming the name is preceded by a prefix. NUL cannot occur in a
+      // translation, so the split is unambiguous.
+      const NAME_SLOT = "\u0000";
+      const [before = "", after = ""] = msg.send.streaming(NAME_SLOT).split(NAME_SLOT);
+      setStatus(before);
+      const streamName = document.createElement("span");
+      streamName.className = "stream-file";
+      streamName.textContent = name;
+      specs.append(streamName, after);
+      // The tail of the status line is the door to the share dialog.
       const share = document.createElement("button");
       share.type = "button";
       share.className = "text-button";
