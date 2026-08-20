@@ -189,6 +189,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} 帧 · 解码中`,
     aboutEta: (duration, frames) => `约 ${duration} · ${frames} 帧`,
     etaTotal: (duration) => `共 ${duration}`,
+    resyncing: "恢复的数据未通过验证。正在重新同步并继续接收…",
+    resyncRestartSender: "如果持续发生，请重启发送方。",
     transferFailedShort: "传输失败",
     transferFailedDetail:
       "这条数据流没有恢复出任何可用内容。请重启发送方，再扫一次——" +

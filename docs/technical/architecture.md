@@ -33,6 +33,8 @@ one).
 - `worker-pool.ts` — decode worker pool; busy workers drop frames, the fountain absorbs it.
 - `no-signal.ts` — pure timing policy for the "Nothing happening?" hint (short first delay, longer after dismissal).
 - `progress.ts` — frames-collected progress estimation and fountain-overhead model.
+- `decode-policy.ts` — pure crop/full-scan downscale and `tryHarder` policy.
+- `receiver-session.ts` — completion verification, race claims, and bounded duplicate filtering.
 - `send-settings.ts` — canonical tx settings lists; the sender's dropdowns and the no-signal advice both render from it.
 - `snippet.ts` — text-snippet container type.
 - `dialog.ts` — geometric backdrop-click close for `<dialog>`.

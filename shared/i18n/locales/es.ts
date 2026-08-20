@@ -198,6 +198,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} fotogramas · decodificando`,
     aboutEta: (duration, frames) => `Aprox. ${duration} · ${frames} fotogramas`,
     etaTotal: (duration) => `${duration} en total`,
+    resyncing: "Los datos recuperados no superaron la verificación. Resincronizando y continuando…",
+    resyncRestartSender: "Si esto sigue ocurriendo, reinicie el emisor.",
     transferFailedShort: "Transferencia fallida",
     transferFailedDetail:
       "De esa transmisión no salió nada utilizable. Reinicie el emisor y vuelva a escanear — " +

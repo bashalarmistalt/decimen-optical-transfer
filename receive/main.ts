@@ -13,6 +13,11 @@
 
 import { LTDecoder } from "../shared/fountain";
 import {
+  cropDownscale,
+  fullScanDownscale,
+  tryHarderForFullScan,
+} from "../shared/decode-policy";
+import {
   estimateTransferProgress,
   expectedFountainOverhead,
 } from "../shared/progress";
@@ -25,7 +30,6 @@ import {
   msg,
   verdictMessage,
 } from "../shared/i18n";
-import { OpticalError } from "../shared/optical-error";
 import { createDecodeWorker } from "./worker-factory";
 import { NoSignalHintTimer } from "../shared/no-signal";
 import {
@@ -35,15 +39,13 @@ import {
   type SymbolQuad,
 } from "../shared/worker-pool";
 import { isSnippet, snippetText } from "../shared/snippet";
+import { classifyFrame, parseFrame, streamIdentity, type FrameHeader, type OpticalFile } from "../shared/protocol";
 import {
-  classifyFrame,
-  fnv1a,
-  parseFrame,
-  streamIdentity,
-  unpackFile,
-  verifyFile,
-  type OpticalFile,
-} from "../shared/protocol";
+  CompletionClaims,
+  RecentFrameFilter,
+  verifyCompletedPayload,
+  type CompletionFailureReason,
+} from "../shared/receiver-session";
 import { NO_SIGNAL_HINT_FRAME_BYTES, NO_SIGNAL_HINT_TX_FPS } from "../shared/send-settings";
 import { statusLine } from "../shared/status-line";
 import { requestScreenWakeLock } from "../shared/wake-lock";
@@ -129,6 +131,8 @@ let reportSessionId = 0; // pairs this run with the sender's diagnostics post
 let startTs = 0;
 let captureGen = 0;
 let done = false;
+const completionClaims = new CompletionClaims();
+const recentFrames = new RecentFrameFilter();
 let settingsWired = false;
 let statsTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -163,6 +167,23 @@ let zeroRegionMs = 0; // transfer time spent with tracking fully collapsed
 let degradedMs = 0; // transfer time spent below the expected code count
 let minSeq = Infinity; // seq span ≈ what the sender emitted while we watched;
 let maxSeq = -1; //        framesNew / span is the fraction we actually caught
+// Run-level frame totals. A failed verification resyncs (replaces) the decoder
+// instance, whose per-instance counters would otherwise lose the frames
+// collected before the resync. These accumulate across instances and reset on a
+// new stream identity.
+let runFramesNew = 0;
+let runFramesDup = 0;
+let runFramesRedundant = 0;
+let exactDuplicatesSkipped = 0;
+let resyncs = 0;
+let resyncReasons: Record<CompletionFailureReason, number> = {
+  "payload-checksum": 0,
+  "container-invalid": 0,
+  "file-digest": 0,
+};
+// Downscale bookkeeping for the diagnostics report.
+let cropsDownscaled = 0;
+let fullScansDownscaled = 0;
 // One sample per stats tick (500 ms): elapsed s, framesNew, solved blocks,
 // live regions, capture fps, decode fps. The shape of a bad run — where it
 // stalled, when tracking collapsed — is invisible in run totals.
@@ -189,6 +210,10 @@ interface Region extends SymbolBox {
    *  detection entirely. Only ever set from real decodes. */
   quad?: SymbolQuad;
   dim?: number;
+  /** Observed density in capture px per module — the decode-downscale policy's
+   *  yardstick. A code that fills the frame at 20 px/module decodes fine at a
+   *  quarter of the pixels. */
+  ppm?: number;
 }
 const regions: Region[] = [];
 // Tried and reverted: a longer TTL for regions with a decode track record
@@ -228,6 +253,31 @@ function decodedCount(): number {
   return n;
 }
 
+/** Frame counters across the decoder instance AND any resynced predecessors,
+ *  so the live metrics, ETA and diagnostics never dip when a resync replaces
+ *  the decoder mid-run. */
+function totalFramesNew(): number {
+  return runFramesNew + (decoder?.framesNew ?? 0);
+}
+function totalFramesDup(): number {
+  return runFramesDup + exactDuplicatesSkipped + (decoder?.framesDup ?? 0);
+}
+function totalFramesRedundant(): number {
+  return runFramesRedundant + (decoder?.framesRedundant ?? 0);
+}
+
+/** The smallest px/module among live decoded regions — the densest code a full
+ *  scan has to keep readable. Undefined with nothing decoded: acquisition then
+ *  has no density yardstick and stays full-res. */
+function minLivePxPerModule(): number | undefined {
+  let min: number | undefined;
+  for (const r of regions) {
+    if (!r.decoded || !r.ppm) continue;
+    min = min === undefined ? r.ppm : Math.min(min, r.ppm);
+  }
+  return min;
+}
+
 function noteRegion(box: SymbolBox, now: number, decoded = true, info?: SymbolInfo): void {
   for (const r of regions) {
     const dx = Math.abs(box.x + box.w / 2 - (r.x + r.w / 2));
@@ -248,7 +298,10 @@ function noteRegion(box: SymbolBox, now: number, decoded = true, info?: SymbolIn
       Object.assign(r, box, { seen: now });
       r.decoded = true;
       if (info?.quad) r.quad = info.quad;
-      if (info?.modules) r.dim = info.modules;
+      if (info?.modules) {
+        r.dim = info.modules;
+        r.ppm = (r.w + r.h) / 2 / info.modules;
+      }
       return;
     }
   }
@@ -263,7 +316,14 @@ function noteRegion(box: SymbolBox, now: number, decoded = true, info?: SymbolIn
     const ratio = Math.max(box.w, box.h) / Math.max(reference.w, reference.h);
     if (ratio < 0.5 || ratio > 2) return;
   }
-  regions.push({ ...box, seen: now, decoded, quad: info?.quad, dim: info?.modules });
+  regions.push({
+    ...box,
+    seen: now,
+    decoded,
+    quad: info?.quad,
+    dim: info?.modules,
+    ppm: info?.modules ? (box.w + box.h) / 2 / info.modules : undefined,
+  });
   if (regions.length > MAX_REGIONS) {
     regions.sort((a, b) => Number(b.decoded) - Number(a.decoded) || b.seen - a.seen);
     regions.length = MAX_REGIONS;
@@ -709,7 +769,38 @@ function scheduleFrame(gen: number) {
 }
 
 const grab = document.createElement("canvas");
+/** Reused for software downscaling: source regions are drawn into this at a
+ *  reduced size and read back, so the worker decodes fewer pixels. Decode cost
+ *  tracks pixel area — a code that fills the frame at 20 px/module reads fine
+ *  at a quarter of that. The preview and overlay stay full-res; only the
+ *  worker's buffer shrinks. */
+const downscale = document.createElement("canvas");
 let frameId = 0;
+
+/** Copy a source region of `grab` into the downscale canvas at `scale` and
+ *  return the reduced pixels. Null when the region is too small to survive —
+ *  the caller skips that decode rather than feed the worker a sub-pixel code. */
+function readDownscaled(
+  sx: number,
+  sy: number,
+  sw: number,
+  sh: number,
+  scale: number,
+): ImageData | null {
+  const dw = Math.max(1, Math.floor(sw / scale));
+  const dh = Math.max(1, Math.floor(sh / scale));
+  if (dw < 32 || dh < 32) return null;
+  if (downscale.width !== dw || downscale.height !== dh) {
+    downscale.width = dw;
+    downscale.height = dh;
+  }
+  const dctx = downscale.getContext("2d", { willReadFrequently: true })!;
+  dctx.clearRect(0, 0, dw, dh);
+  dctx.imageSmoothingEnabled = true;
+  dctx.imageSmoothingQuality = "low";
+  dctx.drawImage(grab, sx, sy, sw, sh, 0, 0, dw, dh);
+  return dctx.getImageData(0, 0, dw, dh);
+}
 
 // GPU-side capture: createImageBitmap(video, crop) hands each worker a
 // transferable bitmap with NO main-thread pixel readback — the worker draws
@@ -834,11 +925,29 @@ function captureFrame() {
   if (fullScanDue) {
     lastFullScan = now;
     fullScans++;
-    const img = ctx.getImageData(0, 0, vw, vh);
-    pool.submit(
-      { id: frameId++, buf: img.data.buffer, w: vw, h: vh, ox: 0, oy: 0, full: true },
-      [img.data.buffer],
-    );
+    // The densest code on screen sets the floor a full scan must keep
+    // readable. With nothing decoded yet there is no density yardstick, so
+    // acquisition stays full-res. tryHarder follows the same policy: cold and
+    // degraded rescans need the extra detector passes; healthy background
+    // scans are re-verification, so they can afford to relax.
+    const minPpm = minLivePxPerModule();
+    const scale = minPpm === undefined ? 1 : fullScanDownscale(minPpm);
+    const tryHarder = tryHarderForFullScan(live, expectedRegions);
+    if (scale > 1) fullScansDownscaled++;
+    if (scale === 1) {
+      const img = ctx.getImageData(0, 0, vw, vh);
+      pool.submit(
+        { id: frameId++, buf: img.data.buffer, w: vw, h: vh, ox: 0, oy: 0, full: true, tryHarder },
+        [img.data.buffer],
+      );
+    } else {
+      const img = readDownscaled(0, 0, vw, vh, scale);
+      if (!img) return;
+      pool.submit(
+        { id: frameId++, buf: img.data.buffer, w: img.width, h: img.height, ox: 0, oy: 0, scale, full: true, tryHarder },
+        [img.data.buffer],
+      );
+    }
     return;
   }
   // One crop per known code, rotated so a short worker pool doesn't starve
@@ -857,12 +966,36 @@ function captureFrame() {
     const w = Math.min(vw - x, Math.ceil(r.w + 2 * pad));
     const h = Math.min(vh - y, Math.ceil(r.h + 2 * pad));
     if (w < 32 || h < 32) continue;
-    const img = ctx.getImageData(x, y, w, h);
+    // A code that fills most of the frame decodes fine at a fraction of the
+    // pixels: scale the crop down (decode cost tracks pixel area) and let the
+    // worker map positions back. Regions without a measured density stay
+    // full-res — no yardstick, no risk.
+    const scale = r.ppm ? cropDownscale(r.ppm) : 1;
+    let img: ImageData;
+    if (scale === 1) {
+      img = ctx.getImageData(x, y, w, h);
+    } else {
+      const small = readDownscaled(x, y, w, h, scale);
+      if (!small) continue;
+      img = small;
+      cropsDownscaled++;
+    }
     // The quad + dimension arm the worker's tracked fast path (detection
     // skipped entirely, 2× at V40); absent — or stale after a miss — the
     // worker falls back to the stock decoder on the same buffer.
     const taken = pool.submit(
-      { id: frameId++, buf: img.data.buffer, w, h, ox: x, oy: y, full: false, quad: r.quad, dim: r.dim },
+      {
+        id: frameId++,
+        buf: img.data.buffer,
+        w: img.width,
+        h: img.height,
+        ox: x,
+        oy: y,
+        scale,
+        full: false,
+        quad: r.quad,
+        dim: r.dim,
+      },
       [img.data.buffer],
     );
     if (!taken) break;
@@ -928,20 +1061,96 @@ function onDecoded(bytes: Uint8Array, box?: SymbolBox, info?: SymbolInfo) {
     streamKey = identity;
     reportSessionId = header.sessionId;
     startTs = performance.now();
+    // A fresh stream starts a fresh run: the previous one's frames no longer
+    // describe anything this receiver is working on.
+    runFramesNew = 0;
+    runFramesDup = 0;
+    runFramesRedundant = 0;
+    exactDuplicatesSkipped = 0;
+    resyncs = 0;
+    resyncReasons = { "payload-checksum": 0, "container-invalid": 0, "file-digest": 0 };
+    minSeq = Infinity;
+    maxSeq = -1;
+    recentFrames.clear();
     progressEl.style.display = "block";
     progressStatus.style.display = "flex";
+  }
+  if (recentFrames.isDuplicate(identity, header.seq)) {
+    exactDuplicatesSkipped++;
+    return;
   }
   minSeq = Math.min(minSeq, header.seq);
   maxSeq = Math.max(maxSeq, header.seq);
   decoder.addFrame(header.seq, block);
   updateProgressEstimate();
 
-  if (decoder.isComplete) {
-    const payload = decoder.assemble()!;
-    const seconds = (performance.now() - startTs) / 1000;
-    const ok = fnv1a(payload) === header.payloadFnv;
-    void finish(payload, ok, seconds);
+  if (decoder.isComplete && completionClaims.claim(identity)) {
+    void attemptCompletion(header, identity, decoder);
   }
+}
+
+/**
+ * The fountain finished assembling a payload. FNV-1a is a 32-bit pre-check,
+ * not a guarantee — a corrupted frame that RS accepted at ECC-L can poison a
+ * block and assemble to the wrong bytes without the fountain knowing. So the
+ * authoritative SHA-256 check runs BEFORE anything is torn down: on failure
+ * the receiver resyncs and keeps receiving (the sender is still streaming the
+ * same stream); only a verified payload pays for the teardown in finish().
+ */
+async function attemptCompletion(
+  header: FrameHeader,
+  identity: string,
+  completedDecoder: LTDecoder,
+): Promise<void> {
+  try {
+    const payload = completedDecoder.assemble();
+    if (!payload || done || streamKey !== identity) return;
+    const seconds = (performance.now() - startTs) / 1000;
+    const verification = await verifyCompletedPayload(payload, header.payloadFnv);
+    if (done || streamKey !== identity || decoder !== completedDecoder) return;
+    if (!verification.ok) {
+      resyncDecoder(verification.reason, completedDecoder);
+      return;
+    }
+    await finish(verification.file, payload, seconds);
+  } catch (error) {
+    // Verification failures are returned as values above. A throw here means
+    // the verified result failed while being rendered after teardown, so give
+    // the user a working restart path instead of an unhandled rejection.
+    if (done && streamKey === identity) {
+      bar.classList.add("error");
+      etaLabel.textContent = msg.receive.transferFailedShort;
+      showError(localizeError(error));
+      const heading = document.createElement("div");
+      heading.className = "failed";
+      heading.textContent = msg.receive.transferFailedShort;
+      const detail = document.createElement("p");
+      detail.className = "received-note";
+      detail.textContent = msg.receive.transferFailedDetail;
+      result.replaceChildren(heading, detail, restartButton(msg.receive.tryAgain));
+    }
+  } finally {
+    completionClaims.release(identity);
+  }
+}
+
+/**
+ * The assembled payload failed verification. The sender is still streaming the
+ * same stream (identity unchanged), so keep the pipeline alive and start a
+ * fresh decoder: LTDecoder locks up once complete (addFrame becomes a no-op),
+ * so the same instance would ignore every re-swept frame. Frames collected so
+ * far are folded into the run totals so the metrics stay continuous.
+ */
+function resyncDecoder(reason: CompletionFailureReason, completedDecoder: LTDecoder): void {
+  if (!decoder || decoder !== completedDecoder || done) return;
+  runFramesNew += decoder.framesNew;
+  runFramesDup += decoder.framesDup;
+  runFramesRedundant += decoder.framesRedundant;
+  resyncs++;
+  resyncReasons[reason]++;
+  const { k, blockLen, sessionId, totalLen } = decoder;
+  decoder = new LTDecoder(k, blockLen, sessionId, totalLen);
+  setStatus(msg.receive.resyncing + (resyncs >= 3 ? ` ${msg.receive.resyncRestartSender}` : ""));
 }
 
 function updateProgressEstimate() {
@@ -953,7 +1162,7 @@ function updateProgressEstimate() {
   // loss rate — a 30%-catch 4-code run showed 96% on the bar with half the
   // blocks outstanding, then "finished early". framesRedundant subtracts
   // exactly those empty arrivals.
-  const usefulFrames = decoder.framesNew - decoder.framesRedundant;
+  const usefulFrames = totalFramesNew() - totalFramesRedundant();
   const estimate = estimateTransferProgress(
     decoder.k,
     usefulFrames,
@@ -971,15 +1180,15 @@ function updateProgressEstimate() {
   );
   // Held back for the first few frames — a two-frame sample reads wildly wrong.
   const rate =
-    decoder.framesNew >= 4
+    totalFramesNew() >= 4
       ? ` · ${msg.units.kbPerSecond(fmtNumber(goodputKbs(elapsed), 1, 1))}`
       : "";
   etaLabel.textContent =
     (estimate.etaSeconds === undefined
       ? estimate.phase === "decoding"
-        ? msg.receive.framesDecoding(fmtInt(decoder.framesNew))
+        ? msg.receive.framesDecoding(fmtInt(totalFramesNew()))
         : msg.receive.estimatingTime
-      : msg.receive.aboutEta(formatDurationL(estimate.etaSeconds), fmtInt(decoder.framesNew))) +
+      : msg.receive.aboutEta(formatDurationL(estimate.etaSeconds), fmtInt(totalFramesNew()))) +
     rate;
 }
 
@@ -990,14 +1199,20 @@ function updateProgressEstimate() {
 function goodputKbs(elapsed: number): number {
   if (!decoder) return 0;
   return (
-    ((decoder.framesNew - decoder.framesRedundant) * decoder.blockLen) /
+    ((totalFramesNew() - totalFramesRedundant()) * decoder.blockLen) /
     expectedFountainOverhead(decoder.k) /
     1024 /
     Math.max(0.1, elapsed)
   );
 }
 
-async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
+/**
+ * Success-only completion: the payload has passed FNV + SHA-256. Tears the
+ * pipeline down (camera, stats timer, worker pool), posts the diagnostics
+ * report, and renders the recovered file. Failures never reach here —
+ * attemptCompletion() resyncs the decoder and keeps receiving.
+ */
+async function finish(file: OpticalFile, container: Uint8Array, seconds: number) {
   done = true;
   captureGen++;
   // npm run diagnostics: one JSON report per completed run, POSTed to the dev
@@ -1014,7 +1229,7 @@ async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
     // catch rate means the receiver missed displayed frames (capacity or
     // tracking); overhead high with a high catch rate blames the fountain.
     const seqSpan = maxSeq >= minSeq ? maxSeq - minSeq + 1 : 0;
-    const parsed = (decoder?.framesNew ?? 0) + (decoder?.framesDup ?? 0);
+    const parsed = totalFramesNew() + totalFramesDup();
     void fetch("/__diagnostics", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1022,7 +1237,7 @@ async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
         role: "receiver",
         when: new Date().toISOString(),
         sessionId: reportSessionId,
-        ok: hashOk,
+        ok: true,
         seconds: Number(seconds.toFixed(2)),
         acquisitionSeconds: cameraStartedTs
           ? Number(((startTs - cameraStartedTs) / 1000).toFixed(2))
@@ -1037,12 +1252,12 @@ async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
         fountain: {
           k: decoder?.k,
           blockLen: decoder?.blockLen,
-          framesNew: decoder?.framesNew,
-          framesDup: decoder?.framesDup,
-          framesRedundant: decoder?.framesRedundant,
-          overhead: decoder ? Number((decoder.framesNew / decoder.k).toFixed(2)) : null,
+          framesNew: totalFramesNew(),
+          framesDup: totalFramesDup(),
+          framesRedundant: totalFramesRedundant(),
+          overhead: decoder ? Number((totalFramesNew() / decoder.k).toFixed(2)) : null,
           usefulOverhead: decoder
-            ? Number(((decoder.framesNew - decoder.framesRedundant) / decoder.k).toFixed(2))
+            ? Number(((totalFramesNew() - totalFramesRedundant()) / decoder.k).toFixed(2))
             : null,
           seqSpan,
           catchRate: seqSpan ? Number((parsed / seqSpan).toFixed(3)) : null,
@@ -1053,10 +1268,14 @@ async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
           captures: totalCaptures,
           capturesDroppedPoolBusy: capturesDropped,
           cropsSubmitted,
+          cropsDownscaled,
           fullScans,
+          fullScansDownscaled,
           decodes: totalDecodes,
           trackedAttempts,
           trackedDecodes,
+          resyncs,
+          resyncReasons,
           zeroRegionMs,
           degradedMs,
         },
@@ -1100,85 +1319,65 @@ async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
   bar.style.width = "100%";
   progressEl.setAttribute("aria-valuenow", "100");
   etaLabel.textContent = msg.receive.etaTotal(formatDurationL(seconds));
-  try {
-    if (!hashOk) throw new OpticalError("streamChecksumMismatch");
-    const file = await unpackFile(container);
-    if (!(await verifyFile(file))) throw new OpticalError("sha256Failed");
-
-    // The container carries its own media type, so the receiver never has to be
-    // told in advance whether a file or a text snippet is coming.
-    const runStats = (sizeLabel: string): string =>
-      [
-        msg.receive.fileStats(
-          sizeLabel,
-          msg.units.secondsValue(fmtNumber(seconds, 1, 1)),
-          msg.units.kbPerSecond(fmtNumber(container.length / 1024 / seconds, 1, 1)),
-        ),
-        ...(file.compression === "gzip" ? [msg.receive.gzipDecompressed] : []),
-        msg.receive.shaVerified,
-      ].join(" · ");
-    if (isSnippet(file)) {
-      progressLabel.textContent = msg.receive.recoveredText;
-      setStatus("");
-      showSnippet(snippetText(file), runStats(msg.receive.textLabel), cfgAutoShow.checked);
-      return;
-    }
-
-    progressLabel.textContent = msg.receive.recoveredFile;
-    const kb = Math.round(file.bytes.length / 1024);
-    // The run's numbers belong under the heading, not up in the camera status
-    // line — which is done for good and goes quiet.
+  // The container carries its own media type, so the receiver never has to be
+  // told in advance whether a file or a text snippet is coming.
+  const runStats = (sizeLabel: string): string =>
+    [
+      msg.receive.fileStats(
+        sizeLabel,
+        msg.units.secondsValue(fmtNumber(seconds, 1, 1)),
+        msg.units.kbPerSecond(fmtNumber(container.length / 1024 / seconds, 1, 1)),
+      ),
+      ...(file.compression === "gzip" ? [msg.receive.gzipDecompressed] : []),
+      msg.receive.shaVerified,
+    ].join(" · ");
+  if (isSnippet(file)) {
+    progressLabel.textContent = msg.receive.recoveredText;
     setStatus("");
-    const summary = document.createElement("p");
-    summary.className = "hint";
-    summary.textContent = runStats(`${fmtInt(kb)} ${msg.units.kilobytes}`);
-    const heading = document.createElement("div");
-    heading.className = "done";
-    heading.textContent = msg.receive.transferComplete;
-    const url = URL.createObjectURL(new Blob([file.bytes as BlobPart], { type: file.type }));
-    const download = document.createElement("a");
-    download.className = "download";
-    download.href = url;
-    download.download = file.name;
-    download.textContent = msg.receive.saveFile(file.name);
-    // Reading order of the finished page: heading, the run's numbers, the
-    // thing that arrived, Save under it, "Receive another file", and the
-    // Transfer summary panel last in its natural spot after #result.
-    result.replaceChildren(heading, summary);
-    const actions = document.createElement("div");
-    actions.className = "note-actions";
-    actions.append(download);
-    const endActions = document.createElement("div");
-    endActions.className = "note-actions pair";
-    endActions.append(restartButton(msg.receive.receiveAnother));
-    if (isPreviewable(file.type)) {
-      // Saving is unaffected either way — `download` above hangs off the blob
-      // URL, which needs nothing on disk. Only the preview is in question.
-      result.append(
-        cfgAutoShow.checked
-          ? await previewElement(file, url)
-          : revealButton(file, url, endActions),
-      );
-    }
-    result.append(actions, endActions);
-    await offerCacheClear(endActions);
-    const support = supportLink();
-    if (support) result.append(support);
-  } catch (error) {
-    // Everything is already torn down by this point, so the only way back to a
-    // live receiver is a reload. Offer it: a failed checksum used to leave the
-    // page dead with nothing but an error string on it.
-    bar.classList.add("error");
-    etaLabel.textContent = msg.receive.transferFailedShort;
-    showError(localizeError(error));
-    const heading = document.createElement("div");
-    heading.className = "failed";
-    heading.textContent = msg.receive.transferFailedShort;
-    const detail = document.createElement("p");
-    detail.className = "received-note";
-    detail.textContent = msg.receive.transferFailedDetail;
-    result.replaceChildren(heading, detail, restartButton(msg.receive.tryAgain));
+    showSnippet(snippetText(file), runStats(msg.receive.textLabel), cfgAutoShow.checked);
+    return;
   }
+
+  progressLabel.textContent = msg.receive.recoveredFile;
+  const kb = Math.round(file.bytes.length / 1024);
+  // The run's numbers belong under the heading, not up in the camera status
+  // line — which is done for good and goes quiet.
+  setStatus("");
+  const summary = document.createElement("p");
+  summary.className = "hint";
+  summary.textContent = runStats(`${fmtInt(kb)} ${msg.units.kilobytes}`);
+  const heading = document.createElement("div");
+  heading.className = "done";
+  heading.textContent = msg.receive.transferComplete;
+  const url = URL.createObjectURL(new Blob([file.bytes as BlobPart], { type: file.type }));
+  const download = document.createElement("a");
+  download.className = "download";
+  download.href = url;
+  download.download = file.name;
+  download.textContent = msg.receive.saveFile(file.name);
+  // Reading order of the finished page: heading, the run's numbers, the
+  // thing that arrived, Save under it, "Receive another file", and the
+  // Transfer summary panel last in its natural spot after #result.
+  result.replaceChildren(heading, summary);
+  const actions = document.createElement("div");
+  actions.className = "note-actions";
+  actions.append(download);
+  const endActions = document.createElement("div");
+  endActions.className = "note-actions pair";
+  endActions.append(restartButton(msg.receive.receiveAnother));
+  if (isPreviewable(file.type)) {
+    // Saving is unaffected either way: `download` above hangs off the blob
+    // URL, which needs nothing on disk. Only the preview is in question.
+    result.append(
+      cfgAutoShow.checked
+        ? await previewElement(file, url)
+        : revealButton(file, url, endActions),
+    );
+  }
+  result.append(actions, endActions);
+  await offerCacheClear(endActions);
+  const support = supportLink();
+  if (support) result.append(support);
 }
 
 /** Media types that put themselves on screen, and so are what the auto-show
@@ -1433,7 +1632,7 @@ function updateStats() {
   if (timeline.length < TIMELINE_MAX_SAMPLES) {
     timeline.push([
       Number(elapsed.toFixed(1)),
-      decoder.framesNew,
+      totalFramesNew(),
       decoder.solvedCount,
       liveNow,
       regions.length,
@@ -1445,7 +1644,7 @@ function updateStats() {
   updateProgressEstimate();
   metric("m-rate").textContent = msg.units.kbPerSecond(fmtNumber(goodputKbs(elapsed), 1, 1));
   metric("m-time").textContent = msg.units.secondsValue(fmtInt(elapsed));
-  metric("m-frames").textContent = `${decoder.framesNew}/${decoder.framesDup}`;
+  metric("m-frames").textContent = `${totalFramesNew()}/${totalFramesDup()}`;
   metric("m-k").textContent = String(decoder.k);
   metric("m-block").textContent = `${fmtInt(decoder.blockLen)} ${msg.units.bytes}`;
   metric("m-payload").textContent = `${fmtInt(Math.round(decoder.totalLen / 1024))} ${msg.units.kilobytes}`;

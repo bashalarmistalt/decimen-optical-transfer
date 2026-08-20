@@ -195,6 +195,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} quadros · decodificando`,
     aboutEta: (duration, frames) => `Cerca de ${duration} · ${frames} quadros`,
     etaTotal: (duration) => `${duration} no total`,
+    resyncing: "Os dados recuperados não passaram na verificação. Ressincronizando e continuando…",
+    resyncRestartSender: "Se isso continuar, reinicie o remetente.",
     transferFailedShort: "Falha na transferência",
     transferFailedDetail:
       "Nada aproveitável saiu desse fluxo. Reinicie o remetente e escaneie de novo — " +

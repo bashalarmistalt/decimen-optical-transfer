@@ -195,6 +195,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} फ़्रेम · डिकोड जारी`,
     aboutEta: (duration, frames) => `लगभग ${duration} · ${frames} फ़्रेम`,
     etaTotal: (duration) => `कुल ${duration}`,
+    resyncing: "रिकवर हुए डेटा का सत्यापन नहीं हुआ। फ़िर से सिंक करके जारी रखा जा रहा है…",
+    resyncRestartSender: "अगर यह बार-बार हो, तो भेजने वाले को दोबारा शुरू करें।",
     transferFailedShort: "ट्रांसफ़र विफल",
     transferFailedDetail:
       "उस स्ट्रीम से कुछ भी काम का नहीं निकला। भेजने वाले को दोबारा शुरू करके फिर से स्कैन करें — " +

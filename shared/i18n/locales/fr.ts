@@ -210,6 +210,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} trames · décodage`,
     aboutEta: (duration, frames) => `Environ ${duration} · ${frames} trames`,
     etaTotal: (duration) => `${duration} au total`,
+    resyncing: "Les données récupérées n’ont pas été validées. Resynchronisation en cours…",
+    resyncRestartSender: "Si cela continue, redémarrez l’expéditeur.",
     transferFailedShort: "Échec du transfert",
     transferFailedDetail:
       "Rien d’utilisable n’est sorti de ce flux. Redémarrez l’expéditeur, puis scannez à " +

@@ -402,3 +402,24 @@ test("an incomplete decoder assembles nothing", () => {
   assert.equal(decoder.isComplete, false);
   assert.equal(decoder.assemble(), null);
 });
+
+test("a completed decoder stops solving — the receiver replaces it on resync", () => {
+  // Pins the behavior the receiver's failed-verification path depends on:
+  // LTDecoder is spent once complete, so the receiver must replace the
+  // instance rather than feed it more frames.
+  const blockLen = 64;
+  const payload = testPayload(5 * blockLen - 7);
+  const encoder = new LTEncoder(payload, blockLen, 9);
+  const decoder = new LTDecoder(encoder.k, blockLen, 9, payload.length);
+  for (let seq = 0; seq < encoder.k; seq++) decoder.addFrame(seq, encoder.encode(seq));
+  assert.ok(decoder.isComplete);
+  assert.equal(decoder.solvedCount, encoder.k);
+  const framesNew = decoder.framesNew;
+
+  // A further frame is counted as an arrival but changes nothing else: the
+  // instance is spent. Re-swept blocks would never re-solve it.
+  decoder.addFrame(encoder.k * 3 + 7, encoder.encode(encoder.k * 3 + 7));
+  assert.equal(decoder.framesNew, framesNew + 1, "still counted as a new arrival");
+  assert.equal(decoder.solvedCount, encoder.k, "no new solving");
+  assert.deepEqual(decoder.assemble(), payload, "assembly is unaffected");
+});

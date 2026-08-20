@@ -204,6 +204,8 @@ export const messages: Messages = {
     framesDecoding: (frames) => `${frames} frame · decodifica in corso`,
     aboutEta: (duration, frames) => `Circa ${duration} · ${frames} frame`,
     etaTotal: (duration) => `${duration} in totale`,
+    resyncing: "I dati recuperati non hanno superato la verifica. Nuova sincronizzazione in corso…",
+    resyncRestartSender: "Se continua a succedere, riavvia il mittente.",
     transferFailedShort: "Trasferimento non riuscito",
     transferFailedDetail:
       "Da quel flusso non è uscito nulla di utilizzabile. Riavvia il mittente e scansiona " +
