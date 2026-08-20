@@ -16,7 +16,11 @@ a home screen.
 
 Files up to 64 MB (or a pasted text snippet), filename and media type
 preserved, gzip only when it helps, SHA-256 verified before anything is
-offered — and received video plays right in the page. The interface speaks
+offered — and received video plays right in the page. A stream can also be
+[exported as a looping animation](docs/user/sending.md#export-animation)
+(APNG, or a PNG sequence for video editors): any camera pointed at the file
+playing — in a page, a stream, a video lesson — receives it like the live
+sender. The interface speaks
 twelve languages (English, español, português, français, Deutsch, italiano,
 русский, हिन्दी, 简体中文, 日本語, 한국어, العربية — with right-to-left
 layout where it belongs); machine-drafted translations say so on the page
@@ -104,6 +108,8 @@ have had similar ideas, and their takes are all worth a look:
   beats sequential looping.
 - [sz3/libcimbar](https://github.com/sz3/libcimbar): goes past QR entirely
   with a custom high-density color code purpose-built for this channel.
+
+## Project Creator/Maintainer
 
 Built by [Evan Crawley (Bash Alarmist)](https://www.linkedin.com/in/evan-crawley), with
 [node-qrcode](https://github.com/soldair/node-qrcode) and

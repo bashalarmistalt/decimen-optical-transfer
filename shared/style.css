@@ -291,10 +291,15 @@ details.settings {
   border-radius: 8px;
   padding: 8px 12px;
 }
+/* Panel headings, not labels: at --muted they sat at the same weight as the
+   knob captions inside them and the panel read as one undifferentiated block.
+   --text-dim lifts them clear of that without spending the accent, which is
+   budgeted for actions and the one eyebrow per page (see control hierarchy). */
 details.settings summary {
   cursor: pointer;
-  color: var(--muted);
+  color: var(--text-dim);
   font-size: 13px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -358,6 +363,42 @@ details.settings input[type="checkbox"] {
 details.settings label.camera-pick select {
   max-width: 220px;
 }
+/* A settings panel nested inside another one — currently the animation
+   exporter under Transfer settings. It must not repeat the parent's card:
+   a second border and background inside the first reads as a sibling that
+   escaped, and the parent's padding would box it in twice. Instead it takes
+   the same hairline-separator treatment .stream-specs uses, so the panel
+   reads as one surface divided into sections. */
+details.settings details.subsection {
+  width: auto;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  margin: 10px 0 2px;
+  padding: 9px 0 0;
+}
+/* Subordinate to the parent summary (13px): same colour family, ranked by
+   size rather than by dimming — dimming it would put it back among the knob
+   captions it needs to sit above. */
+details.settings details.subsection summary {
+  font-size: 11px;
+}
+/* The row inside a subsection sits directly under its own summary, so it does
+   not need the parent's opening gap on top of the separator's. */
+details.settings details.subsection .row {
+  padding-top: 8px;
+}
+/* .hint centers by default — it is normally a standalone line under a heading.
+   In here it is body copy inside a left-aligned panel, sitting right below the
+   left-aligned spec grid, so it aligns with the knobs instead. Same override,
+   for the same reason, that .status-line already makes. (The action row below
+   it stays centered: .note-actions is a deliberate shared treatment.) */
+details.settings details.subsection .hint {
+  text-align: start;
+  max-width: none;
+}
+
 .settings-actual {
   margin: 10px 0 2px;
   padding-top: 9px;
@@ -836,6 +877,15 @@ details.settings label.camera-pick select {
   border-start-end-radius: 8px;
   border-end-end-radius: 8px;
   font-weight: 700;
+}
+
+/* The file name in the streaming status line — the one variable in an
+   otherwise fixed sentence, and the only part worth reading twice. Page text
+   colour lifts it out of the muted line; it wraps anywhere because a long name
+   would otherwise shove the share button off a phone screen. */
+.stream-file {
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .send-shell .status-line,

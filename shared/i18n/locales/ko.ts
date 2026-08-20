@@ -122,6 +122,22 @@ export const messages: Messages = {
       codes > 1 ? `${bytes}바이트 × ${codes}` : `${bytes}바이트`,
     gzipTo: (size) => `gzip → ${size}`,
     compressionNone: "없음",
+    exportSummary: "애니메이션 내보내기",
+    exportIntro:
+      "이 스트림을 반복 재생되는 애니메이션 파일로 저장합니다. 동영상이나 페이지에 넣으면 " +
+      "재생 중인 루프를 향한 어떤 카메라든 파일을 받을 수 있습니다.",
+    exportFormat: "형식",
+    exportFormatZip: "PNG 시퀀스(ZIP)",
+    exportFps: "프레임 속도",
+    exportScale: "모듈 배율",
+    exportCycles: "사이클 수",
+    exportStart: "내보내기",
+    exportCancel: "취소",
+    exportEstimate: (frames, size, loop) => `${frames} 프레임 · 약 ${size} · 루프 ${loop}`,
+    exportProgress: (percent) => `렌더링 중… ${percent}%`,
+    exportFailed: (message) => `내보내기 실패: ${message}`,
+    exportZipLimit: (frames, max) =>
+      `${frames} 프레임은 ZIP 한도 ${max}을(를) 넘습니다. 사이클 수를 줄이거나, 레이아웃을 넓히거나, 프레임당 바이트를 늘려 줄이세요.`,
   },
 
   receive: {

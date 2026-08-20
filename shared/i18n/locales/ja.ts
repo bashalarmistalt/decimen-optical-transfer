@@ -122,6 +122,22 @@ export const messages: Messages = {
       codes > 1 ? `${bytes} バイト × ${codes}` : `${bytes} バイト`,
     gzipTo: (size) => `gzip → ${size}`,
     compressionNone: "なし",
+    exportSummary: "アニメーションを書き出す",
+    exportIntro:
+      "このストリームをループ再生されるアニメーションファイルとして保存します。動画やページに埋め込めば、" +
+      "再生中のループにカメラを向けるだけでファイルを受信できます。",
+    exportFormat: "形式",
+    exportFormatZip: "PNG 連番(ZIP)",
+    exportFps: "フレームレート",
+    exportScale: "モジュール拡大率",
+    exportCycles: "サイクル数",
+    exportStart: "書き出す",
+    exportCancel: "キャンセル",
+    exportEstimate: (frames, size, loop) => `${frames} フレーム · 約 ${size} · ループ ${loop}`,
+    exportProgress: (percent) => `レンダリング中… ${percent}%`,
+    exportFailed: (message) => `書き出しに失敗しました: ${message}`,
+    exportZipLimit: (frames, max) =>
+      `${frames} フレームは ZIP の上限 ${max} を超えています。サイクル数を減らす、レイアウトを広げる、バイト / フレームを増やすことで削減できます。`,
   },
 
   receive: {

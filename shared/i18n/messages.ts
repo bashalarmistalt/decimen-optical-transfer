@@ -144,6 +144,26 @@ export interface Messages {
     frameBytesValue: (bytes: string, codes: number) => string;
     gzipTo: (size: string) => string; // "gzip → 1.2 MB"
     compressionNone: string;
+    /** Animation-export panel: save the stream as an APNG or a PNG-sequence
+     *  ZIP. "APNG" (the format select's first option) stays untranslated. */
+    exportSummary: string; // "Export animation"
+    exportIntro: string;
+    exportFormat: string; // "format"
+    exportFormatZip: string; // "PNG sequence (ZIP)"
+    exportFps: string; // "frame rate"
+    exportScale: string; // "module scale"
+    exportCycles: string; // "cycles" — carousel repetitions baked into the file
+    exportStart: string; // "Export"
+    exportCancel: string; // "Cancel" — same button while a render runs
+    /** Forecast line: "96 frames · ~1.9 MB · 9s loop". */
+    exportEstimate: (frames: string, size: string, loop: string) => string;
+    exportProgress: (percent: string) => string; // "rendering… 45%"
+    exportFailed: (message: string) => string;
+    /** A PNG-sequence ZIP caps at 65535 entries. Name the knobs that actually
+     *  cut the frame count — cycles, layout, bytes / frame — using this
+     *  locale's own wording for them. Module scale is NOT one of them: it
+     *  changes pixels per module, never how many frames there are. */
+    exportZipLimit: (frames: string, max: string) => string;
   };
 
   /** Receive page: static markup and runtime messages together. */

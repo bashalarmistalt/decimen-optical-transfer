@@ -1,7 +1,7 @@
 {
   "name": "decimen-optical-transfer",
   "private": true,
-  "version": "0.5.2",
+  "version": "0.5.3",
   "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=24"

@@ -121,6 +121,22 @@ export const messages: Messages = {
       codes > 1 ? `${bytes} बाइट × ${codes}` : `${bytes} बाइट`,
     gzipTo: (size) => `gzip → ${size}`,
     compressionNone: "कोई नहीं",
+    exportSummary: "एनीमेशन निर्यात करें",
+    exportIntro:
+      "इस स्ट्रीम को लूप होने वाली एनीमेशन फ़ाइल के रूप में सहेजें। इसे किसी वीडियो या पेज में जोड़ें — " +
+      "चल रहे लूप की ओर कैमरा घुमाकर कोई भी डिवाइस फ़ाइल प्राप्त कर सकता है।",
+    exportFormat: "फ़ॉर्मैट",
+    exportFormatZip: "PNG अनुक्रम (ZIP)",
+    exportFps: "फ़्रेम दर",
+    exportScale: "मॉड्यूल स्केल",
+    exportCycles: "चक्र",
+    exportStart: "निर्यात करें",
+    exportCancel: "रद्द करें",
+    exportEstimate: (frames, size, loop) => `${frames} फ़्रेम · ~${size} · ${loop} लूप`,
+    exportProgress: (percent) => `रेंडर हो रहा है… ${percent}%`,
+    exportFailed: (message) => `निर्यात विफल: ${message}`,
+    exportZipLimit: (frames, max) =>
+      `${frames} फ़्रेम ${max} की ZIP सीमा से अधिक हैं। कम चक्र, व्यापक लेआउट, या अधिक बाइट / फ़्रेम से इसे घटाएँ।`,
   },
 
   receive: {

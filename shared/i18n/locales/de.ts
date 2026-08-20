@@ -126,6 +126,22 @@ export const messages: Messages = {
       codes > 1 ? `${bytes} Bytes × ${codes}` : `${bytes} Bytes`,
     gzipTo: (size) => `gzip → ${size}`,
     compressionNone: "keine",
+    exportSummary: "Animation exportieren",
+    exportIntro:
+      "Speichert diesen Stream als Animationsdatei in Endlosschleife. In ein Video oder eine Seite eingebettet " +
+      "kann jede Kamera, die auf die laufende Schleife zeigt, die Datei empfangen.",
+    exportFormat: "Format",
+    exportFormatZip: "PNG-Sequenz (ZIP)",
+    exportFps: "Bildrate",
+    exportScale: "Modul-Skalierung",
+    exportCycles: "Zyklen",
+    exportStart: "Exportieren",
+    exportCancel: "Abbrechen",
+    exportEstimate: (frames, size, loop) => `${frames} Frames · ~${size} · ${loop} Schleife`,
+    exportProgress: (percent) => `rendern… ${percent} %`,
+    exportFailed: (message) => `Export fehlgeschlagen: ${message}`,
+    exportZipLimit: (frames, max) =>
+      `${frames} Frames überschreiten das ZIP-Limit von ${max}. Reduzieren Sie es mit weniger Zyklen, einem breiteren Layout oder mehr Bytes / Frame.`,
   },
 
   receive: {

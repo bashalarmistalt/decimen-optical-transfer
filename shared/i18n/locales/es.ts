@@ -124,6 +124,22 @@ export const messages: Messages = {
       codes > 1 ? `${bytes} bytes × ${codes}` : `${bytes} bytes`,
     gzipTo: (size) => `gzip → ${size}`,
     compressionNone: "ninguna",
+    exportSummary: "Exportar animación",
+    exportIntro:
+      "Guarda esta transmisión como un archivo de animación en bucle. Insértalo en un vídeo o en una página: " +
+      "cualquier cámara que apunte al bucle en reproducción puede recibir el archivo.",
+    exportFormat: "formato",
+    exportFormatZip: "Secuencia PNG (ZIP)",
+    exportFps: "velocidad de fotogramas",
+    exportScale: "escala de módulos",
+    exportCycles: "ciclos",
+    exportStart: "Exportar",
+    exportCancel: "Cancelar",
+    exportEstimate: (frames, size, loop) => `${frames} fotogramas · ~${size} · bucle de ${loop}`,
+    exportProgress: (percent) => `generando… ${percent}%`,
+    exportFailed: (message) => `error al exportar: ${message}`,
+    exportZipLimit: (frames, max) =>
+      `${frames} fotogramas superan el límite ZIP de ${max}. Redúcelo con menos ciclos, una disposición más amplia o más bytes / fotograma.`,
   },
 
   receive: {
