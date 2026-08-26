@@ -20,6 +20,32 @@ export interface TransferProgressEstimate {
   phase: "collecting" | "decoding";
 }
 
+export function recoveredFraction(totalBytes: number, recoveredBytes: number): number {
+  if (totalBytes <= 0 || recoveredBytes <= 0) return 0;
+  return Math.min(1, recoveredBytes / totalBytes);
+}
+
+export function markRecoveredRange(
+  bins: Float32Array,
+  totalBytes: number,
+  start: number,
+  length: number,
+): void {
+  if (bins.length === 0 || totalBytes <= 0 || length <= 0) return;
+  const from = Math.max(0, start);
+  const to = Math.min(totalBytes, start + length);
+  if (to <= from) return;
+  const first = Math.max(0, Math.floor((from / totalBytes) * bins.length));
+  const last = Math.min(bins.length - 1, Math.ceil((to / totalBytes) * bins.length) - 1);
+  for (let i = first; i <= last; i++) {
+    const binStart = (i / bins.length) * totalBytes;
+    const binEnd = ((i + 1) / bins.length) * totalBytes;
+    const overlap = Math.max(0, Math.min(to, binEnd) - Math.max(from, binStart));
+    if (overlap <= 0) continue;
+    bins[i] = Math.min(1, bins[i]! + overlap / (binEnd - binStart));
+  }
+}
+
 export function estimateTransferProgress(
   sourceBlocks: number,
   uniqueFrames: number,

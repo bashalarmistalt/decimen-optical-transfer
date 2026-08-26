@@ -367,6 +367,29 @@ test("frames decode in any order", () => {
   assert.deepEqual(decoder.assemble(), payload);
 });
 
+test("solved blocks are written immediately at their final offsets", () => {
+  const byteLength = 50_000;
+  const blockLen = 1445;
+  const payload = testPayload(byteLength);
+  const encoder = new LTEncoder(payload, blockLen, 41);
+  const written: { index: number; bytes: Uint8Array }[] = [];
+  const decoder = new LTDecoder(encoder.k, blockLen, 41, byteLength, (index, bytes) => {
+    written.push({ index, bytes: Uint8Array.from(bytes) });
+  });
+
+  const last = encoder.k - 1;
+  decoder.addFrame(last, encoder.encode(last));
+  assert.equal(decoder.assemble(), null);
+  assert.equal(written.length, 1);
+  assert.equal(written[0]!.index, last);
+  assert.deepEqual(written[0]!.bytes, payload.subarray(last * blockLen));
+
+  decoder.addFrame(0, encoder.encode(0));
+  assert.equal(written.length, 2);
+  assert.equal(written[1]!.index, 0);
+  assert.deepEqual(written[1]!.bytes, payload.subarray(0, blockLen));
+});
+
 test("repeated frames are counted but never corrupt the decode", () => {
   const byteLength = 60_000;
   const blockLen = 1445;

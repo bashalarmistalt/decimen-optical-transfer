@@ -236,12 +236,13 @@ body.qr-full #stage[hidden] {
   text-align: end;
 }
 .progress > div {
+  width: 100%;
   height: 100%;
-  background: var(--accent);
-  transition: width 0.25s;
+  background: var(--progress-fill, transparent);
+  transition: background-color 0.2s;
 }
 .progress > div.error {
-  background: var(--red);
+  --progress-fill: var(--red);
 }
 /* Styled like the page headings, not green: the status line already says
    "SHA-256 verified ✓", which is what green is reserved for in this palette. */

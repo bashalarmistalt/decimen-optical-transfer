@@ -4,6 +4,8 @@ import {
   estimateTransferProgress,
   expectedFountainOverhead,
   formatDuration,
+  markRecoveredRange,
+  recoveredFraction,
 } from "../shared/progress.ts";
 
 // k=100 is a ~300 KB file at 2953 bytes/frame — a very ordinary transfer.
@@ -77,4 +79,15 @@ test("durations stay compact and readable", () => {
   assert.equal(formatDuration(12.1), "13s");
   assert.equal(formatDuration(75.1), "1m 16s");
   assert.equal(formatDuration(3_661), "1h 1m");
+});
+
+test("recovered ranges mark their true file positions", () => {
+  const bins = new Float32Array(10);
+  markRecoveredRange(bins, 1000, 400, 100);
+  markRecoveredRange(bins, 1000, 900, 100);
+  assert.deepEqual(
+    [...bins].map((value) => Number(value.toFixed(2))),
+    [0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+  );
+  assert.equal(recoveredFraction(1000, 200), 0.2);
 });

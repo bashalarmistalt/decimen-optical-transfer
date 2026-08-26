@@ -15,6 +15,8 @@ import { LTDecoder } from "../shared/fountain";
 import {
   estimateTransferProgress,
   expectedFountainOverhead,
+  markRecoveredRange,
+  recoveredFraction,
 } from "../shared/progress";
 import {
   fmtInt,
@@ -121,9 +123,11 @@ const NO_SIGNAL_DISMISSED_MS = 15_000;
 // updateStats() are derived from this, so the window and the divisor can't
 // drift apart.
 const STATS_WINDOW_MS = 2000;
+const PROGRESS_COVERAGE_BINS = 160;
 
 let stream: MediaStream | null = null;
 let decoder: LTDecoder | null = null;
+let receivedContainer: Uint8Array | null = null;
 let streamKey = "";
 let reportSessionId = 0; // pairs this run with the sender's diagnostics post
 let startTs = 0;
@@ -131,6 +135,12 @@ let captureGen = 0;
 let done = false;
 let settingsWired = false;
 let statsTimer: ReturnType<typeof setInterval> | undefined;
+let progressSolvedBlocks = 0;
+let progressTotalBlocks = 0;
+let progressTotalBytes = 0;
+let progressRecoveredBytes = 0;
+let progressEtaText = msg.receive.estimatingTime;
+let progressCoverage = new Float32Array(PROGRESS_COVERAGE_BINS);
 
 const noSignal = new NoSignalHintTimer(NO_SIGNAL_FIRST_MS, NO_SIGNAL_DISMISSED_MS);
 const pool = new DecodeWorkerPool(
@@ -428,6 +438,64 @@ noSignalDialog.addEventListener("close", dismissNoSignal);
 function dismissNoSignal() {
   noSignalToast.hidden = true;
   noSignal.dismiss(performance.now());
+}
+
+function progressPercentLabel(percent: number): string {
+  return percent < 10 ? fmtNumber(percent, 1, 1) : fmtNumber(percent, 0);
+}
+
+function coverageColor(alpha: number): string {
+  if (alpha <= 0.001) return "transparent";
+  if (alpha >= 0.999) return "var(--accent)";
+  return `rgba(var(--accent-rgb), ${alpha.toFixed(3)})`;
+}
+
+function progressFillStyle(): string {
+  if (progressRecoveredBytes <= 0) return "transparent";
+  const stops: string[] = [];
+  let runStart = 0;
+  let runColor = coverageColor(progressCoverage[0] ?? 0);
+  for (let i = 1; i <= progressCoverage.length; i++) {
+    const color = i < progressCoverage.length ? coverageColor(progressCoverage[i] ?? 0) : "";
+    if (color === runColor) continue;
+    const start = ((runStart * 100) / progressCoverage.length).toFixed(3);
+    const end = ((i * 100) / progressCoverage.length).toFixed(3);
+    stops.push(`${runColor} ${start}%`, `${runColor} ${end}%`);
+    runStart = i;
+    runColor = color;
+  }
+  return `linear-gradient(90deg, ${stops.join(", ")})`;
+}
+
+function renderProgressUi(percent: number) {
+  const clamped = Math.max(0, Math.min(100, percent));
+  bar.style.width = "100%";
+  bar.style.setProperty("--progress-fill", progressFillStyle());
+  progressEl.setAttribute("aria-valuenow", String(Math.floor(clamped)));
+  progressLabel.textContent = msg.receive.progressBlocks(
+    progressPercentLabel(clamped),
+    fmtInt(progressSolvedBlocks),
+    fmtInt(progressTotalBlocks),
+  );
+  etaLabel.textContent = progressEtaText;
+}
+
+function resetTransferProgressUi(totalBlocks: number) {
+  progressSolvedBlocks = 0;
+  progressTotalBlocks = totalBlocks;
+  progressTotalBytes = 0;
+  progressRecoveredBytes = 0;
+  progressEtaText = msg.receive.estimatingTime;
+  progressCoverage = new Float32Array(PROGRESS_COVERAGE_BINS);
+  bar.classList.remove("error");
+  renderProgressUi(0);
+}
+
+function finishTransferProgressUi(percent: number, etaText: string) {
+  progressEtaText = etaText;
+  progressCoverage.fill(1);
+  progressRecoveredBytes = progressTotalBytes;
+  renderProgressUi(percent);
 }
 
 /** By the time a transfer ends the camera, worker pool and stats timer are all
@@ -924,12 +992,30 @@ function onDecoded(bytes: Uint8Array, box?: SymbolBox, info?: SymbolInfo) {
   // just the session id — see the note on it in protocol.ts.
   const identity = streamIdentity(header);
   if (!decoder || streamKey !== identity) {
-    decoder = new LTDecoder(header.k, header.blockLen, header.sessionId, header.totalLen);
+    receivedContainer = new Uint8Array(header.totalLen);
+    decoder = new LTDecoder(
+      header.k,
+      header.blockLen,
+      header.sessionId,
+      header.totalLen,
+      (index, bytes) => {
+        receivedContainer?.set(bytes, index * header.blockLen);
+        progressRecoveredBytes += bytes.length;
+        markRecoveredRange(
+          progressCoverage,
+          progressTotalBytes,
+          index * header.blockLen,
+          bytes.length,
+        );
+      },
+    );
     streamKey = identity;
     reportSessionId = header.sessionId;
     startTs = performance.now();
     progressEl.style.display = "block";
     progressStatus.style.display = "flex";
+    resetTransferProgressUi(header.k);
+    progressTotalBytes = header.totalLen;
   }
   minSeq = Math.min(minSeq, header.seq);
   maxSeq = Math.max(maxSeq, header.seq);
@@ -937,7 +1023,7 @@ function onDecoded(bytes: Uint8Array, box?: SymbolBox, info?: SymbolInfo) {
   updateProgressEstimate();
 
   if (decoder.isComplete) {
-    const payload = decoder.assemble()!;
+    const payload = receivedContainer ?? decoder.assemble()!;
     const seconds = (performance.now() - startTs) / 1000;
     const ok = fnv1a(payload) === header.payloadFnv;
     void finish(payload, ok, seconds);
@@ -947,12 +1033,12 @@ function onDecoded(bytes: Uint8Array, box?: SymbolBox, info?: SymbolInfo) {
 function updateProgressEstimate() {
   if (!decoder) return;
   const elapsed = Math.max(0, (performance.now() - startTs) / 1000);
-  // Progress runs on frames that carried INFORMATION, not raw arrivals. On a
-  // lossy multi-code run the carousel re-sweeps blocks this receiver already
-  // solved; each re-sweep frame has a fresh seq, so framesNew inflates by the
-  // loss rate — a 30%-catch 4-code run showed 96% on the bar with half the
-  // blocks outstanding, then "finished early". framesRedundant subtracts
-  // exactly those empty arrivals.
+  // ETA runs on frames that carried INFORMATION, not raw arrivals. On a lossy
+  // multi-code run the carousel re-sweeps blocks this receiver already solved;
+  // each re-sweep frame has a fresh seq, so framesNew inflates by the loss
+  // rate — a 30%-catch 4-code run showed 96% on the bar with half the blocks
+  // outstanding, then "finished early". framesRedundant subtracts exactly
+  // those empty arrivals.
   const usefulFrames = decoder.framesNew - decoder.framesRedundant;
   const estimate = estimateTransferProgress(
     decoder.k,
@@ -960,27 +1046,20 @@ function updateProgressEstimate() {
     elapsed,
     decoder.solvedCount,
   );
-  const percent = estimate.fraction * 100;
-  const shownPercent = percent < 10 ? fmtNumber(percent, 1, 1) : fmtNumber(percent, 0);
-  bar.style.width = `${percent.toFixed(1)}%`;
-  progressEl.setAttribute("aria-valuenow", String(Math.floor(percent)));
-  progressLabel.textContent = msg.receive.progressBlocks(
-    shownPercent,
-    fmtInt(decoder.solvedCount),
-    fmtInt(decoder.k),
-  );
   // Held back for the first few frames — a two-frame sample reads wildly wrong.
   const rate =
     decoder.framesNew >= 4
       ? ` · ${msg.units.kbPerSecond(fmtNumber(goodputKbs(elapsed), 1, 1))}`
       : "";
-  etaLabel.textContent =
+  progressSolvedBlocks = decoder.solvedCount;
+  progressTotalBlocks = decoder.k;
+  progressEtaText =
     (estimate.etaSeconds === undefined
       ? estimate.phase === "decoding"
         ? msg.receive.framesDecoding(fmtInt(decoder.framesNew))
         : msg.receive.estimatingTime
-      : msg.receive.aboutEta(formatDurationL(estimate.etaSeconds), fmtInt(decoder.framesNew))) +
-    rate;
+      : msg.receive.aboutEta(formatDurationL(estimate.etaSeconds), fmtInt(decoder.framesNew))) + rate;
+  renderProgressUi(recoveredFraction(progressTotalBytes, progressRecoveredBytes) * 100);
 }
 
 /** Payload KB/s, discounting the frames the fountain spends on overhead. That
@@ -1097,9 +1176,7 @@ async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
   // true, so the panel relabels itself as the record of the run it now is.
   const diagnosticsLabel = diagnosticsEl?.querySelector("summary");
   if (diagnosticsLabel) diagnosticsLabel.textContent = msg.receive.transferSummary;
-  bar.style.width = "100%";
-  progressEl.setAttribute("aria-valuenow", "100");
-  etaLabel.textContent = msg.receive.etaTotal(formatDurationL(seconds));
+  finishTransferProgressUi(100, msg.receive.etaTotal(formatDurationL(seconds)));
   try {
     if (!hashOk) throw new OpticalError("streamChecksumMismatch");
     const file = await unpackFile(container);
@@ -1168,8 +1245,8 @@ async function finish(container: Uint8Array, hashOk: boolean, seconds: number) {
     // Everything is already torn down by this point, so the only way back to a
     // live receiver is a reload. Offer it: a failed checksum used to leave the
     // page dead with nothing but an error string on it.
+    finishTransferProgressUi(100, msg.receive.transferFailedShort);
     bar.classList.add("error");
-    etaLabel.textContent = msg.receive.transferFailedShort;
     showError(localizeError(error));
     const heading = document.createElement("div");
     heading.className = "failed";

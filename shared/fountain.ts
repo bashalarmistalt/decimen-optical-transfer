@@ -217,6 +217,8 @@ interface PendingFrame {
   words: Uint32Array;
 }
 
+export type SolvedBlockHandler = (index: number, bytes: Uint8Array) => void;
+
 export class LTDecoder {
   private readonly words: number;
   private readonly solved: (Uint32Array | null)[];
@@ -237,6 +239,7 @@ export class LTDecoder {
     readonly blockLen: number,
     readonly sessionId: number,
     readonly totalLen: number,
+    private readonly onSolvedBlock?: SolvedBlockHandler,
   ) {
     this.words = Math.ceil(blockLen / 4);
     this.solved = new Array<Uint32Array | null>(k).fill(null);
@@ -259,9 +262,9 @@ export class LTDecoder {
     const words = new Uint32Array(this.words);
     new Uint8Array(words.buffer).set(block.subarray(0, this.blockLen));
     for (const b of [...idx]) {
-      const s = this.solved[b];
-      if (s) {
-        xorInto(words, s);
+      const solved = this.solved[b];
+      if (solved) {
+        xorInto(words, solved);
         idx.delete(b);
       }
     }
@@ -295,6 +298,8 @@ export class LTDecoder {
       if (this.solved[b]) continue;
       this.solved[b] = w;
       this.solvedCount++;
+      const len = Math.min(this.blockLen, this.totalLen - b * this.blockLen);
+      this.onSolvedBlock?.(b, new Uint8Array(w.buffer, 0, len));
       const waiting = this.byBlock.get(b);
       if (!waiting) continue;
       this.byBlock.delete(b);
