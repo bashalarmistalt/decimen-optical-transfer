@@ -15,6 +15,7 @@ import { messages as zhHans } from "../shared/i18n/locales/zh-hans";
 import { messages as ja } from "../shared/i18n/locales/ja";
 import { messages as ko } from "../shared/i18n/locales/ko";
 import { messages as ar } from "../shared/i18n/locales/ar";
+import { messages as tr } from "../shared/i18n/locales/tr";
 
 /**
  * Hosted-site localization: one fully translated page tree per locale.
@@ -53,7 +54,7 @@ import { messages as ar } from "../shared/i18n/locales/ar";
  */
 
 const CATALOGS: Record<string, Messages> = {
-  en, es, "pt-br": ptBr, fr, de, it, ru, hi, "zh-hans": zhHans, ja, ko, ar,
+  en, es, "pt-br": ptBr, fr, de, it, ru, hi, "zh-hans": zhHans, ja, ko, ar, tr,
 };
 
 // Hosted page files, keyed by their path in the bundle.

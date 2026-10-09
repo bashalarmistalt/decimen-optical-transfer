@@ -1,6 +1,6 @@
 # Localization
 
-Decimen ships in twelve languages from one English source. The moving parts,
+Decimen ships in thirteen languages from one English source. The moving parts,
 and the invariants that keep them honest:
 
 ## Where the words live

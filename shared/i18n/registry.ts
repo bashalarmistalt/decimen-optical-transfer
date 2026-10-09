@@ -2,7 +2,7 @@
 //
 // This file is deliberately tiny and dependency-free — it rides in every
 // entry chunk (the language switcher needs each locale's native name without
-// loading twelve catalogs), and the build imports it to know which page trees
+// loading thirteen catalogs), and the build imports it to know which page trees
 // to emit. The catalogs themselves load on demand (see index.ts loaders).
 //
 // To add a language: add a row here, add shared/i18n/locales/<code>.ts
@@ -42,6 +42,7 @@ export const LOCALES: readonly LocaleInfo[] = [
   { code: "ja", lang: "ja", nativeName: "日本語", dir: "ltr", reviewed: false },
   { code: "ko", lang: "ko", nativeName: "한국어", dir: "ltr", reviewed: false },
   { code: "ar", lang: "ar", nativeName: "العربية", dir: "rtl", reviewed: false },
+  { code: "tr", lang: "tr", nativeName: "Türkçe", dir: "ltr", reviewed: false },
 ];
 
 export function localeByCode(code: string): LocaleInfo | undefined {

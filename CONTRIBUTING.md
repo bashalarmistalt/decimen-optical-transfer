@@ -34,7 +34,7 @@ it open under the same terms.
 
 ## Translations
 
-The interface ships in twelve languages; every non-English catalog was
+The interface ships in thirteen languages; every non-English catalog was
 machine-drafted and carries an on-page note saying so until a native speaker
 reviews it. **Translation review is the single most useful small
 contribution this project can take.** Reviewing a language means reading
