@@ -124,6 +124,13 @@ export const MAX_FILE_BYTES = 64 * 1024 * 1024;
  */
 export const MAX_FILE_LABEL = `${MAX_FILE_BYTES / 1024 / 1024} MB`;
 const FILE_HEADER_LEN = 49;
+/**
+ * The largest legal optical container: the configured file limit plus the
+ * fixed container header and the two u16 metadata fields (name and media type).
+ * Frame headers are untrusted input, so keep their declared allocation below
+ * the largest container the sender can actually produce.
+ */
+export const MAX_TOTAL_LEN = MAX_FILE_BYTES + FILE_HEADER_LEN + 2 * 0xffff;
 const FILE_MAGIC = new Uint8Array([0x44, 0x43, 0x46, 0x32]); // DCF2
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -460,6 +467,12 @@ export function classifyFrame(bytes: Uint8Array): FrameVerdict {
   const totalLen = dv.getUint32(14, true);
   if (k === 0 || blockLen === 0 || totalLen === 0) return { kind: "malformed" };
   if (bytes.length !== HEADER_LEN + blockLen) return { kind: "malformed" };
+  const capacity = k * blockLen;
+  // totalLen must describe exactly k source blocks: the final block may be
+  // partial, but every earlier block is full. This rejects impossible headers
+  // before receive/main.ts can construct a decoder from them.
+  if (totalLen > capacity || totalLen <= capacity - blockLen) return { kind: "malformed" };
+  if (totalLen > MAX_TOTAL_LEN) return { kind: "malformed" };
   return { kind: "ok" };
 }
 
