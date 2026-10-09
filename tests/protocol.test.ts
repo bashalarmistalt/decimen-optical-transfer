@@ -5,6 +5,7 @@ import {
   CRITICAL_FLAGS,
   FLAG_ENCRYPTED,
   HEADER_LEN,
+  MAX_TOTAL_LEN,
   type FrameHeader,
   frameVerdictMessage,
   isPrecompressedType,
@@ -96,7 +97,7 @@ test("the frame header is byte-for-byte what the wire expects", () => {
       seq: 0x01020304,
       k: 0x0111,
       blockLen: 6,
-      totalLen: 0x00fedcba,
+      totalLen: 0x00000666,
       payloadFnv: 0x89abcdef,
       flags: 0,
     },
@@ -104,7 +105,7 @@ test("the frame header is byte-for-byte what the wire expects", () => {
   );
   assert.equal(
     [...frame].map((b) => b.toString(16).padStart(2, "0")).join(" "),
-    "d1 c3 03 00 ef be 04 03 02 01 11 01 06 00 ba dc fe 00 ef cd ab 89 01 02 03 04 05 06",
+    "d1 c3 03 00 ef be 04 03 02 01 11 01 06 00 66 06 00 00 ef cd ab 89 01 02 03 04 05 06",
   );
   assert.equal(frame.length, HEADER_LEN + 6);
 
@@ -115,7 +116,7 @@ test("the frame header is byte-for-byte what the wire expects", () => {
     seq: 0x01020304,
     k: 0x0111,
     blockLen: 6,
-    totalLen: 0x00fedcba,
+    totalLen: 0x00000666,
     payloadFnv: 0x89abcdef,
     flags: 0,
   });
@@ -284,6 +285,30 @@ test("frames that are not ours, or not self-consistent, are rejected", () => {
   const zeroK = good.slice();
   new DataView(zeroK.buffer).setUint16(10, 0, true);
   assert.equal(parseFrame(zeroK), null, "k=0 would divide by zero downstream");
+
+  const impossibleShort = good.slice();
+  new DataView(impossibleShort.buffer).setUint32(14, 8, true);
+  assert.equal(parseFrame(impossibleShort), null, "totalLen must fill every block except the last");
+
+  const impossibleLong = good.slice();
+  new DataView(impossibleLong.buffer).setUint32(14, 13, true);
+  assert.equal(parseFrame(impossibleLong), null, "totalLen must fit inside k blocks");
+
+  const maxBlockLen = 0xffff;
+  const maxK = Math.ceil(MAX_TOTAL_LEN / maxBlockLen);
+  const oversized = packFrame(
+    {
+      sessionId: 1,
+      seq: 2,
+      k: maxK,
+      blockLen: maxBlockLen,
+      totalLen: MAX_TOTAL_LEN + 1,
+      payloadFnv: 0,
+      flags: 0,
+    },
+    new Uint8Array(maxBlockLen),
+  );
+  assert.equal(parseFrame(oversized), null, "totalLen above the legal container limit");
 });
 
 // ---------------------------------------------------------------------------
