@@ -14,7 +14,7 @@
 //           applyHtmlTranslations() swaps the static copy in place.
 //
 // Catalogs load via dynamic import so each locale is its own chunk: the
-// receive entry has a CI size tripwire (see ci.yml), and twelve statically
+// receive entry has a CI size tripwire (see ci.yml), and thirteen statically
 // bundled catalogs would blow straight through it. The standalone builds set
 // inlineDynamicImports, so THEY carry every catalog — which is exactly right
 // for a file that can't know its reader's language until it is opened.

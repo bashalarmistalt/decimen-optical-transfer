@@ -21,8 +21,8 @@ offered — and received video plays right in the page. A stream can also be
 (APNG, or a PNG sequence for video editors): any camera pointed at the file
 playing — in a page, a stream, a video lesson — receives it like the live
 sender. The interface speaks
-twelve languages (English, español, português, français, Deutsch, italiano,
-русский, हिन्दी, 简体中文, 日本語, 한국어, العربية — with right-to-left
+thirteen languages (English, español, português, français, Deutsch, italiano,
+русский, हिन्दी, 简体中文, 日本語, 한국어, العربية, Türkçe — with right-to-left
 layout where it belongs); machine-drafted translations say so on the page
 until a native speaker has [reviewed them](docs/technical/localization.md). Currently measured at
 **<!-- speed:begin -->418.5 KB/s sustained<!-- speed:end -->** screen to

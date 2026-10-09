@@ -26,4 +26,5 @@ export const loaders: Record<string, () => Promise<{ messages: Messages }>> = {
   ja: () => import("./locales/ja"),
   ko: () => import("./locales/ko"),
   ar: () => import("./locales/ar"),
+  tr: () => import("./locales/tr"),
 };

@@ -29,9 +29,10 @@ import { messages as zhHans } from "../shared/i18n/locales/zh-hans.ts";
 import { messages as ja } from "../shared/i18n/locales/ja.ts";
 import { messages as ko } from "../shared/i18n/locales/ko.ts";
 import { messages as ar } from "../shared/i18n/locales/ar.ts";
+import { messages as tr } from "../shared/i18n/locales/tr.ts";
 
 const CATALOGS: Record<string, Messages> = {
-  en, es, "pt-br": ptBr, fr, de, it, ru, hi, "zh-hans": zhHans, ja, ko, ar,
+  en, es, "pt-br": ptBr, fr, de, it, ru, hi, "zh-hans": zhHans, ja, ko, ar, tr,
 };
 
 /** Every string leaf of a catalog, as [dot.path, value]. */
