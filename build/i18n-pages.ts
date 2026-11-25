@@ -15,6 +15,7 @@ import { messages as zhHans } from "../shared/i18n/locales/zh-hans";
 import { messages as ja } from "../shared/i18n/locales/ja";
 import { messages as ko } from "../shared/i18n/locales/ko";
 import { messages as ar } from "../shared/i18n/locales/ar";
+import { messages as vi } from "../shared/i18n/locales/vi";
 
 /**
  * Hosted-site localization: one fully translated page tree per locale.
@@ -53,7 +54,7 @@ import { messages as ar } from "../shared/i18n/locales/ar";
  */
 
 const CATALOGS: Record<string, Messages> = {
-  en, es, "pt-br": ptBr, fr, de, it, ru, hi, "zh-hans": zhHans, ja, ko, ar,
+  en, es, "pt-br": ptBr, fr, de, it, ru, hi, "zh-hans": zhHans, ja, ko, ar, vi,
 };
 
 // Hosted page files, keyed by their path in the bundle.
@@ -114,7 +115,7 @@ function resolved(catalog: Messages, path: string, tokens: Record<string, string
 /**
  * Check the inline English against the en catalog. The HTML stays readable
  * English on purpose; this is what keeps it from quietly diverging from what
- * the other eleven languages actually translate.
+ * the other twelve languages actually translate.
  */
 function verifyEnglishInline(html: string, page: string, tokens: Record<string, string>): void {
   const fail = (path: string, inline: string, catalog: string): never => {

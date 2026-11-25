@@ -6,7 +6,7 @@
 // to emit. The catalogs themselves load on demand (see index.ts loaders).
 //
 // To add a language: add a row here, add shared/i18n/locales/<code>.ts
-// (copy en.ts and translate it), and add its loader in index.ts. The build
+// (copy en.ts and translate it), and add its loader in shared/i18n/loaders.ts. The build
 // emits its /<code>/ page tree, sitemap entries, hreflang links, and PWA
 // manifest from this table; nothing else needs touching.
 //
@@ -42,6 +42,7 @@ export const LOCALES: readonly LocaleInfo[] = [
   { code: "ja", lang: "ja", nativeName: "日本語", dir: "ltr", reviewed: false },
   { code: "ko", lang: "ko", nativeName: "한국어", dir: "ltr", reviewed: false },
   { code: "ar", lang: "ar", nativeName: "العربية", dir: "rtl", reviewed: false },
+  { code: "vi", lang: "vi", nativeName: "Tiếng Việt", dir: "ltr", reviewed: false },
 ];
 
 export function localeByCode(code: string): LocaleInfo | undefined {
