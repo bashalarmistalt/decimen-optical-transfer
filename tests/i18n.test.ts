@@ -29,9 +29,10 @@ import { messages as zhHans } from "../shared/i18n/locales/zh-hans.ts";
 import { messages as ja } from "../shared/i18n/locales/ja.ts";
 import { messages as ko } from "../shared/i18n/locales/ko.ts";
 import { messages as ar } from "../shared/i18n/locales/ar.ts";
+import { messages as vi } from "../shared/i18n/locales/vi.ts";
 
 const CATALOGS: Record<string, Messages> = {
-  en, es, "pt-br": ptBr, fr, de, it, ru, hi, "zh-hans": zhHans, ja, ko, ar,
+  en, es, "pt-br": ptBr, fr, de, it, ru, hi, "zh-hans": zhHans, ja, ko, ar, vi,
 };
 
 /** Every string leaf of a catalog, as [dot.path, value]. */
@@ -273,6 +274,8 @@ test("browser language lists land on the right locale", () => {
   assert.equal(matchLocale(["da", "sv"]), undefined);
   assert.equal(matchLocale([]), undefined);
   assert.equal(matchLocale(["AR"])?.code, "ar");
+  assert.equal(matchLocale(["vi-VN"])?.code, "vi");
+  assert.equal(matchLocale(["vi"])?.code, "vi");
 });
 
 test("fillTokens fills what it knows and leaves what it doesn't", () => {
