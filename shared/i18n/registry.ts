@@ -6,7 +6,7 @@
 // to emit. The catalogs themselves load on demand (see index.ts loaders).
 //
 // To add a language: add a row here, add shared/i18n/locales/<code>.ts
-// (copy en.ts and translate it), and add its loader in index.ts. The build
+// (copy en.ts and translate it), and add its loader in shared/i18n/loaders.ts. The build
 // emits its /<code>/ page tree, sitemap entries, hreflang links, and PWA
 // manifest from this table; nothing else needs touching.
 //
