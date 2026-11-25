@@ -115,7 +115,7 @@ function resolved(catalog: Messages, path: string, tokens: Record<string, string
 /**
  * Check the inline English against the en catalog. The HTML stays readable
  * English on purpose; this is what keeps it from quietly diverging from what
- * the other eleven languages actually translate.
+ * the other twelve languages actually translate.
  */
 function verifyEnglishInline(html: string, page: string, tokens: Record<string, string>): void {
   const fail = (path: string, inline: string, catalog: string): never => {
