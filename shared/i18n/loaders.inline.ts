@@ -17,6 +17,7 @@ import * as zhHans from "./locales/zh-hans";
 import * as ja from "./locales/ja";
 import * as ko from "./locales/ko";
 import * as ar from "./locales/ar";
+import * as vi from "./locales/vi";
 
 export const loaders: Record<string, () => Promise<{ messages: Messages }>> = {
   en: () => Promise.resolve(en),
@@ -31,4 +32,5 @@ export const loaders: Record<string, () => Promise<{ messages: Messages }>> = {
   ja: () => Promise.resolve(ja),
   ko: () => Promise.resolve(ko),
   ar: () => Promise.resolve(ar),
+  vi: () => Promise.resolve(vi),
 };
